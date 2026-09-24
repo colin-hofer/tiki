@@ -78,8 +78,9 @@ type UserPage struct {
 }
 
 type TagPage struct {
-	Tags      []string `json:"tags"`
-	NextAfter string   `json:"next_after,omitempty"`
+	Tags      []string         `json:"tags"`
+	Usage     map[string]int64 `json:"usage,omitempty"`
+	NextAfter string           `json:"next_after,omitempty"`
 }
 
 type Session struct {

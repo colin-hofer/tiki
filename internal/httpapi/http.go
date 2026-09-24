@@ -25,7 +25,7 @@ func Handler(store *tiki.Store) http.Handler {
 	mux.Handle("/", frontend.Handler())
 	registerDownloads(mux, downloads())
 	methods := make(map[string][]string)
-	for _, path := range []string{"/api/v1/cli", "/api/v1/cli/install.sh", "/api/v1/cli/downloads/"} {
+	for _, path := range []string{"/api/v1/cli", "/api/v1/cli/install.sh", "/api/v1/cli/downloads/", "/api/v1/skills/tiki/SKILL.md", "/api/v1/skills/tiki/SKILL.md.sha256"} {
 		methods[path] = []string{http.MethodGet, http.MethodHead}
 	}
 	attempts := &loginLimiter{windows: make(map[string]loginWindow)}
@@ -250,7 +250,7 @@ func Handler(store *tiki.Store) http.Handler {
 		if err != nil {
 			return nil, err
 		}
-		tags, err := store.Tags(r.Context(), "", tiki.MaxPageSize)
+		tags, err := store.Tags(r.Context(), "", tiki.MaxPageSize, false)
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +323,24 @@ func Handler(store *tiki.Store) http.Handler {
 				return nil, invalid("invalid limit")
 			}
 		}
-		return store.Tags(r.Context(), r.URL.Query().Get("after"), limit)
+		usage := false
+		if value := r.URL.Query().Get("usage"); value != "" {
+			usage, err = strconv.ParseBool(value)
+			if err != nil {
+				return nil, invalid("invalid usage flag")
+			}
+		}
+		return store.Tags(r.Context(), r.URL.Query().Get("after"), limit, usage)
+	})
+	handle("DELETE /api/v1/tags", "write", func(r *http.Request, user tiki.User) (any, error) {
+		var in struct {
+			Name string `json:"name"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		count, err := store.DeleteTag(r.Context(), user.ID, in.Name)
+		return map[string]any{"deleted": err == nil, "removed_from": count}, err
 	})
 	for path, allowed := range methods {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {

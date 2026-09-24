@@ -81,7 +81,7 @@ export function devAPI(port: number): Plugin {
       try { await work; } catch (err) { onExit(); throw err; }
       server.watcher.add(root);
       server.watcher.on('all', (event, file) => {
-        if (closing || !['add', 'change', 'unlink'].includes(event) || !/(?:\.(?:go|sql|sh)|[/\\]go\.(?:mod|sum))$/.test(file)) return;
+        if (closing || !['add', 'change', 'unlink'].includes(event) || !/(?:\.(?:go|sql|sh)|[/\\]go\.(?:mod|sum)|[/\\]skills[/\\]tiki[/\\]SKILL\.md)$/.test(file)) return;
         clearTimeout(timer);
         timer = setTimeout(() => {
           work = work.then(() => restart()).catch(err => {

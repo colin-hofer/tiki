@@ -19,7 +19,7 @@ check: fmt test vet build
 	python3 scripts/test-deploy.py
 
 fmt:
-	@test -z "$$(gofmt -l main.go internal frontend/*.go)" || { gofmt -l main.go internal frontend/*.go; exit 1; }
+	@test -z "$$(gofmt -l main.go internal frontend/*.go skills/*.go)" || { gofmt -l main.go internal frontend/*.go skills/*.go; exit 1; }
 
 test: frontend cli
 	go test -race ./...

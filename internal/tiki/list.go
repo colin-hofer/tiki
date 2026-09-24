@@ -118,12 +118,17 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	return out, nil
 }
 
-func (s *Store) Tags(ctx context.Context, after string, limit int) (TagPage, error) {
+func (s *Store) Tags(ctx context.Context, after string, limit int, includeUsage bool) (TagPage, error) {
 	out := TagPage{Tags: []string{}}
 	if limit < 1 || limit > MaxPageSize {
 		return out, invalid("limit must be between 1 and 200")
 	}
-	rows, err := s.read.QueryContext(ctx, "SELECT name FROM tags WHERE name>? ORDER BY name LIMIT ?", after, limit+1)
+	countColumn := "0"
+	if includeUsage {
+		countColumn = "(SELECT count(*) FROM item_tags WHERE tag_id=t.id)"
+		out.Usage = make(map[string]int64)
+	}
+	rows, err := s.read.QueryContext(ctx, "SELECT name,"+countColumn+" FROM tags t WHERE name>? ORDER BY name LIMIT ?", after, limit+1)
 	if err != nil {
 		return out, err
 	}
@@ -131,7 +136,8 @@ func (s *Store) Tags(ctx context.Context, after string, limit int) (TagPage, err
 
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		var count int64
+		if err := rows.Scan(&name, &count); err != nil {
 			return out, err
 		}
 		if len(out.Tags) == limit {
@@ -139,6 +145,9 @@ func (s *Store) Tags(ctx context.Context, after string, limit int) (TagPage, err
 			break
 		}
 		out.Tags = append(out.Tags, name)
+		if includeUsage {
+			out.Usage[name] = count
+		}
 	}
 	return out, rows.Err()
 }

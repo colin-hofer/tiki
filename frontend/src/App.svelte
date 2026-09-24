@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { api, APIError, directory, hasSession, setSession, watchChanges, statuses, label, initials } from './api';
+  import { api, APIError, directory, hasSession, setSession, watchChanges, statuses, label, initials, avatarHue } from './api';
   import type { Board, Item, Page, Session, User, Status } from './api';
   import Icon from './Icon.svelte';
   import ItemEditor from './ItemEditor.svelte';
@@ -8,16 +8,19 @@
   import Select from './Select.svelte';
   import Join from './Join.svelte';
   import PeopleDialog from './PeopleDialog.svelte';
-  import InstallCLI from './InstallCLI.svelte';
+  import SetupDialog from './SetupDialog.svelte';
   import AccountDialog from './AccountDialog.svelte';
+  import TagsDialog from './TagsDialog.svelte';
   import { flip } from 'svelte/animate';
-  import { arrive, capture, duration, panel, sheet } from './motion';
+  import { arrive, capture, duration, panel, sheet, pin, unpin } from './motion';
 
   const initialURL = new URL(location.href);
   const initialInvite = new URLSearchParams(initialURL.hash.slice(1)).get('invite');
   let inviteToken = $state(initialInvite);
   let inviting = $state(false);
   let installing = $state(false);
+  let managingTags = $state(false);
+  let tagsReturn: HTMLElement | null = null;
   let account = $state<'menu' | 'profile' | 'password' | null>(null);
   let accountReturn: HTMLElement | null = null;
   let user = $state<User | null>(null);
@@ -144,28 +147,135 @@
     if (tab && mobile) tabStrip.scrollTo({ left: tab.offsetLeft - (tabStrip.clientWidth - tab.offsetWidth) / 2, behavior: duration(1) ? 'smooth' : 'instant' });
   });
 
+  // While a tab tap or drag scrolls the feed, intermediate positions must not reset the chosen status.
+  let scrollingTo: { status: Status; until: number } | null = null;
   function feedScrolled() {
     if (!mobile || !board) return;
     const status = columns[Math.round(board.scrollLeft / Math.max(1, board.clientWidth))];
+    if (scrollingTo) { if (status === scrollingTo.status || Date.now() > scrollingTo.until) scrollingTo = null; else return; }
     if (status && status !== feedStatus) { feedStatus = status; activeColumn = status; }
   }
   function showStatus(status: Status, instant = false) {
     const index = columns.indexOf(status);
     if (index < 0 || !board) return;
-    board.scrollTo({ left: index * board.clientWidth, behavior: instant || !duration(1) ? 'instant' : 'smooth' });
+    const smooth = !instant && Boolean(duration(1));
+    scrollingTo = smooth ? { status, until: Date.now() + 800 } : null;
+    board.scrollTo({ left: index * board.clientWidth, behavior: smooth ? 'smooth' : 'instant' });
     feedStatus = status; activeColumn = status;
   }
   async function openSearch() { searchOpen = true; await tick(); searchInput.focus(); }
   function closeSearch() { query = ''; searchOpen = false; updateURL(); }
 
-  // Touch long-press opens a move/actions sheet; native drag and drop is unavailable on touch screens.
+  // Touch: press and hold lifts a card. Drag up/down to reorder, to a screen edge or status tab to change status, release to drop.
+  // Releasing without moving opens the ticket's actions sheet. Native drag and drop is unavailable on touch screens.
+  type TouchDrag = { item: Item; ghost: HTMLElement; dx: number; dy: number; x: number; y: number; startX: number; startY: number; moved: boolean; edgeSince: number; tabSince: number; tab: string };
+  let lifted = $state<TouchDrag | null>(null);
+  let dragFrame = 0;
   function pressStart(event: PointerEvent, item: Item) {
     suppressClick = false;
-    if (event.pointerType !== 'touch' || readonly) return;
-    press = { x: event.clientX, y: event.clientY, timer: setTimeout(() => { press = undefined; suppressClick = true; navigator.vibrate?.(8); void openMoveSheet(item); }, 450) };
+    if (event.pointerType !== 'touch' || readonly || moving || lifted) return;
+    const card = event.currentTarget as HTMLElement;
+    const x = event.clientX, y = event.clientY;
+    press = { x, y, timer: setTimeout(() => { press = undefined; void lift(card, item, x, y); }, 350) };
   }
   function pressMove(event: PointerEvent) { if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) pressEnd(); }
   function pressEnd() { if (press) { clearTimeout(press.timer); press = undefined; } }
+  async function lift(card: HTMLElement, item: Item, x: number, y: number) {
+    if (!card.isConnected || !(await guardDraft())) return;
+    suppressClick = true; navigator.vibrate?.(10);
+    const rect = card.getBoundingClientRect();
+    const ghost = card.cloneNode(true) as HTMLElement;
+    for (const element of [ghost, ...ghost.querySelectorAll('[id]')]) element.removeAttribute('id');
+    ghost.classList.add('card-ghost'); ghost.setAttribute('aria-hidden', 'true'); ghost.inert = true;
+    Object.assign(ghost.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    ghost.style.transform = 'scale(1.03) rotate(-1deg)';
+    document.body.append(ghost);
+    ghost.animate([{ transform: 'none', boxShadow: 'none' }, {}], { duration: duration(160), easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    selectedId = item.id;
+    lifted = { item, ghost, dx: x - rect.left, dy: y - rect.top, x, y, startX: x, startY: y, moved: false, edgeSince: 0, tabSince: 0, tab: '' };
+    window.addEventListener('pointermove', dragMove, { passive: false });
+    window.addEventListener('pointerup', dragEnd);
+    window.addEventListener('pointercancel', dragCancel);
+    window.addEventListener('touchmove', holdScroll, { passive: false });
+    dragFrame = requestAnimationFrame(dragTick);
+  }
+  function holdScroll(event: TouchEvent) { if (lifted) event.preventDefault(); }
+  function dragMove(event: PointerEvent) {
+    if (!lifted || event.pointerType !== 'touch') return;
+    event.preventDefault();
+    lifted.x = event.clientX; lifted.y = event.clientY;
+    if (Math.hypot(lifted.x - lifted.startX, lifted.y - lifted.startY) > 10) lifted.moved = true;
+    lifted.ghost.style.transform = `translate(${lifted.x - lifted.dx - parseFloat(lifted.ghost.style.left)}px, ${lifted.y - lifted.dy - parseFloat(lifted.ghost.style.top)}px) scale(1.03) rotate(-1deg)`;
+    placeDrop();
+  }
+  function feedColumn() { return board?.querySelector<HTMLElement>(`[data-column="${feedStatus}"]`); }
+  function placeDrop() {
+    if (!lifted) return;
+    const cards = [...(feedColumn()?.querySelectorAll<HTMLElement>('[data-card]') || [])].filter(node => node.dataset.card !== lifted!.item.id);
+    const next = cards.find(node => { const r = node.getBoundingClientRect(); return lifted!.y < r.top + r.height / 2; });
+    const anchor = next || cards.at(-1);
+    dropTarget = anchor?.dataset.card || ''; dropBefore = Boolean(next);
+  }
+  function dragTick(now: number) {
+    if (!lifted) return;
+    const { x, y } = lifted;
+    // Auto-scroll the column near its top and bottom edges.
+    const scroller = feedColumn()?.querySelector<HTMLElement>('.column-scroll');
+    if (scroller && lifted.moved) {
+      const r = scroller.getBoundingClientRect();
+      const speed = y < r.top + 56 ? -(r.top + 56 - y) / 4 : y > r.bottom - 72 ? (y - (r.bottom - 72)) / 4 : 0;
+      if (speed) { scroller.scrollTop += Math.max(-14, Math.min(14, speed)); placeDrop(); }
+    }
+    // Hovering a status tab, or holding at a screen edge, switches status.
+    const tab = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.status-tabs [data-status]')?.dataset.status || '';
+    if (tab !== lifted.tab) { lifted.tab = tab; lifted.tabSince = now; }
+    else if (tab && tab !== feedStatus && now - lifted.tabSince > 260) { showStatus(tab as Status); lifted.tabSince = now; void tick().then(placeDrop); }
+    const edge = !tab && lifted.moved ? (x < 28 ? -1 : x > innerWidth - 28 ? 1 : 0) : 0;
+    if (!edge) lifted.edgeSince = 0;
+    else if (!lifted.edgeSince) lifted.edgeSince = now;
+    else if (now - lifted.edgeSince > 380) {
+      const status = columns[columns.indexOf(feedStatus) + edge];
+      if (status) { showStatus(status); navigator.vibrate?.(6); void tick().then(placeDrop); }
+      lifted.edgeSince = now + 320;
+    }
+    dragFrame = requestAnimationFrame(dragTick);
+  }
+  function stopDrag() {
+    cancelAnimationFrame(dragFrame);
+    window.removeEventListener('pointermove', dragMove);
+    window.removeEventListener('pointerup', dragEnd);
+    window.removeEventListener('pointercancel', dragCancel);
+    window.removeEventListener('touchmove', holdScroll);
+    const drag = lifted; lifted = null; dropTarget = '';
+    return drag;
+  }
+  function settle(ghost: HTMLElement) {
+    ghost.animate([{ opacity: 1 }, { opacity: 0, transform: `${ghost.style.transform || ''} scale(.98)` }], { duration: duration(140), easing: 'ease-out' }).finished.then(() => ghost.remove(), () => ghost.remove());
+  }
+  function dragCancel() { const drag = stopDrag(); if (drag) settle(drag.ghost); }
+  async function dragEnd() {
+    const target = dropTarget, before = dropBefore;
+    const drag = stopDrag();
+    if (!drag) return;
+    const { item, ghost } = drag;
+    const status = feedStatus;
+    if (!drag.moved && status === item.status) { settle(ghost); void openMoveSheet(item); return; }
+    const anchor = items.find(i => i.id === target);
+    // Same column and same slot: nothing to save.
+    const others = visible.filter(i => i.status === status && i.id !== item.id);
+    const slot = anchor ? others.indexOf(anchor) + (before ? 0 : 1) : others.length;
+    if (status === item.status && slot === visible.filter(i => i.status === status).findIndex(i => i.id === item.id)) { settle(ghost); return; }
+    // A card landing in another column arrives from the drop point; the ghost leaves once its replacement is animating.
+    if (status !== item.status) pin(item.id, ghost.getBoundingClientRect(), () => ghost.remove());
+    try {
+      if (anchor) await moveTo(item, anchor, before);
+      else await changeStatus(item.id, status);
+    } finally {
+      unpin(item.id);
+      if (ghost.isConnected) settle(ghost);
+      if (mobile) { activeColumn = status; showStatus(status, true); }
+    }
+  }
   async function openMoveSheet(item: Item) {
     if (!(await guardDraft())) return;
     selectedId = item.id; moveSheet = item; sheetOpenedAt = Date.now();
@@ -202,8 +312,9 @@
     ...columns.map((status, index) => ({ id: `column-${status}`, label: `Go to ${label(status)} column`, hint: String(index + 1), run: () => focusColumn(status, preferredRow) })),
     { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: showHelp },
     ...(user?.role === 'admin' ? [{ id: 'people', label: 'Manage people', run: () => inviting = true }] : []),
-    { id: 'install', label: 'Install CLI', run: () => installing = true },
+    { id: 'install', label: 'Install CLI & agent skill', run: () => installing = true },
     { id: 'profile', label: 'Edit my profile', run: () => showAccount('profile') },
+    ...(!readonly ? [{ id: 'manage-tags', label: 'Manage tags', run: showTags }] : []),
     { id: 'password', label: 'Change my password', run: () => showAccount('password') },
     { id: 'logout', label: 'Sign out', run: () => void logout() },
   ]);
@@ -311,6 +422,20 @@
 
   function message(e: unknown) { return e instanceof Error ? e.message : 'Something went wrong. Please try again.'; }
 
+  function showTags() {
+    if (readonly) return;
+    tagsReturn = document.activeElement as HTMLElement; managingTags = true;
+  }
+  async function closeTags() {
+    managingTags = false; await tick();
+    if (tagsReturn?.isConnected) tagsReturn.focus(); else focusBoard();
+  }
+  async function tagDeleted(name: string) {
+    tags = tags.filter(tag => tag !== name);
+    if (filterTag === name) { filterTag = ''; updateURL(); }
+    await refresh(false);
+  }
+
   function showAccount(view: 'menu' | 'profile' | 'password' = 'menu') {
     accountReturn = document.activeElement as HTMLElement; account = view;
   }
@@ -321,7 +446,7 @@
   function expireSession() {
     if (authExpired) return;
     controller?.abort(); generation++; detailGeneration++; syncing = false; busy = false;
-    authExpired = true; account = null; setSession(''); stopLive(); connection = 'offline';
+    authExpired = true; account = null; managingTags = false; setSession(''); stopLive(); connection = 'offline';
     loginError = 'Your session expired. Sign in again to continue. Your open draft is preserved.';
   }
   async function passwordChanged() {
@@ -336,7 +461,7 @@
     catch (e) { if (!(e instanceof APIError && e.status === 401)) { error = message(e); return; } }
     stopLive(); controller?.abort(); generation++; detailGeneration++;
     setSession(''); user = null; authExpired = false; inviting = false; installing = false; account = null; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
-    users = []; tags = []; password = ''; quickStatus = null; quickTitle = ''; hasLoaded = false; updateURL();
+    users = []; tags = []; managingTags = false; password = ''; quickStatus = null; quickTitle = ''; hasLoaded = false; updateURL();
   }
 
   async function loadDirectory(board?: Board, signal?: AbortSignal) {
@@ -481,6 +606,7 @@
     if (applyOrder || !hasLoaded) busy = true;
     try {
       const filters = new URLSearchParams();
+      const requestedTag = filterTag;
       if (filterStatus) filters.set('status', filterStatus);
       if (filterTag) filters.set('tag', filterTag);
       if (filterAssignee) filters.set('assignee', filterAssignee);
@@ -488,6 +614,11 @@
       const board = only ? undefined : await api<Board>(`/board?${filters}`, 'GET', undefined, signal);
       if (board) await loadDirectory(board, signal);
       if (own !== generation) return false;
+      // Another session may delete the active tag. Remove that obsolete filter
+      // and fetch the remaining view instead of leaving an empty, hidden filter.
+      if (board && requestedTag && filterTag === requestedTag && !tags.includes(requestedTag)) {
+        filterTag = ''; updateURL(); return refresh(applyOrder, true);
+      }
       const refreshedColumns = columns.filter(status => !only || only.has(status));
       const pages = await Promise.all(refreshedColumns.map(async status => {
         const preview = !filterStatus && ['backlog', 'complete', 'void'].includes(status) ? 20 : 100;
@@ -725,7 +856,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet || inviting || installing || deleteTarget || account) return;
+    if (help || moveSheet || inviting || installing || deleteTarget || account || managingTags) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -866,8 +997,8 @@
       <div class="search-field" class:open={searchOpen || Boolean(query)}><Icon name="search" size={14} /><input aria-label="Search loaded items" placeholder="Filter loaded items…" bind:value={query} bind:this={searchInput} oninput={() => updateURL()} onblur={() => { if (!query) searchOpen = false; }} /><kbd>/</kbd><button class="icon-button search-close mobile-only" aria-label="Close search" onmousedown={event => event.preventDefault()} onclick={closeSearch}><Icon name="close" size={16} /></button></div>
       <div class="filters" class:open={filtersOpen} inert={mobile && !filtersOpen}>
         <div class="sheet-header mobile-only"><h2>Filters</h2><button class="text-button" onclick={() => filtersOpen = false}>Done</button></div>
-        <Select label="Filter assignee" title="Assignee" variant="filter" placeholder="Assignee" placeholderIcon="person" bind:value={filterAssignee} onchange={filterChanged} options={[{ value: '', label: 'Any assignee', icon: 'person' }, { value: 'none', label: 'Unassigned', icon: 'unassigned' }, ...users.map(u => ({ value: u.id, label: u.removed_at ? `${u.name} (removed)` : u.id === user?.id ? `${u.name} (me)` : u.name, avatar: initials(u.name) }))]} />
-        <Select label="Filter tag" title="Tag" variant="filter" placeholder="Tag" placeholderIcon="tag" bind:value={filterTag} onchange={filterChanged} options={[{ value: '', label: 'Any tag', icon: 'tag' }, ...tags.map(tag => ({ value: tag, label: tag, icon: 'hash' }))]} />
+        <Select label="Filter assignee" title="Assignee" variant="filter" placeholder="Assignee" placeholderIcon="person" bind:value={filterAssignee} onchange={filterChanged} options={[{ value: '', label: 'Any assignee', icon: 'person' }, { value: 'none', label: 'Unassigned', icon: 'unassigned' }, ...users.map(u => ({ value: u.id, label: u.removed_at ? `${u.name} (removed)` : u.id === user?.id ? `${u.name} (me)` : u.name, avatar: initials(u.name), avatarHue: avatarHue(u.id) }))]} />
+        <Select label="Filter tag" title="Tag" variant="filter" placeholder="Tag" placeholderIcon="tag" bind:value={filterTag} onchange={filterChanged} options={[{ value: '', label: 'Any tag', icon: 'tag' }, ...tags.map(tag => ({ value: tag, label: tag, icon: 'hash' })), ...(!readonly ? [{ value: '\u0000manage-tags', label: 'Manage tags…', icon: 'tag', action: showTags }] : [])]} />
         <Select label="Filter status" title="Status" variant="filter" placeholder="Status" placeholderIcon="status" bind:value={filterStatus} onchange={filterChanged} options={[{ value: '', label: 'Any status', icon: 'status' }, ...statuses.map(status => ({ value: status, label: label(status), icon: status, iconClass: `status-icon ${status}` }))]} />
         {#if filterTag || filterAssignee || filterStatus || query}<button class="icon-button" aria-label="Clear filters" title="Clear filters" onclick={clearFilters}><Icon name="clear-filter" size={15} /><span class="mobile-only">Clear all</span></button>{/if}
       </div>
@@ -878,10 +1009,10 @@
       <button class="icon-button mobile-only filter-toggle" aria-label="Filters" aria-expanded={filtersOpen} onclick={() => filtersOpen = !filtersOpen}><Icon name="filter" size={18} />{#if activeFilters}<span class="badge">{activeFilters}</span>{/if}</button>
       <button class="icon-button desktop-only" aria-label="Refresh board" title="Refresh (R)" disabled={busy} onclick={() => { error = ''; void refresh(true); }}><Icon name="refresh" size={15} /></button>
       {#if user.role === 'admin'}<button class="icon-button" aria-label="Manage people" title="Manage people" onclick={() => inviting = true}><Icon name="add-person" size={17} /></button>{/if}
-      <button class="icon-button desktop-only" aria-label="Install CLI" title="Install CLI" onclick={() => installing = true}><Icon name="terminal" size={17} /></button>
+      <button class="icon-button desktop-only" aria-label="CLI & agents" title="CLI & agents" onclick={() => installing = true}><Icon name="terminal" size={17} /></button>
       <button class="icon-button" aria-label="Commands" title="Commands (Ctrl/Cmd+K)" onclick={() => showPalette()}><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"><Icon name="more" size={18} /></span></button>
       <button class="icon-button desktop-only" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={showHelp}><Icon name="keyboard" size={16} /></button>
-      <button class="icon-button" aria-label="Account menu" aria-haspopup="dialog" aria-expanded={Boolean(account)} title={user.name} onclick={() => showAccount()}><Icon name="account" size={20} /></button>
+      <button class="icon-button" aria-label="Account menu" aria-haspopup="dialog" aria-expanded={Boolean(account)} title={user.name} onclick={() => showAccount()}><span class="mini-avatar account-avatar" style:--hue={avatarHue(user.id)} aria-hidden="true">{initials(user.name)}</span></button>
     </div>
     {#if error}<div class="board-alert error-banner" role="alert"><span>{error}</span><button class="text-button" onclick={() => { error = ''; void refresh(true); }}>Retry</button></div>{/if}
     {#if notice}<div class="board-alert notice-banner" role="status">{notice}<button class="icon-button" aria-label="Dismiss notice" onclick={() => notice = ''}><Icon name="close" size={13} /></button></div>{/if}
@@ -892,19 +1023,19 @@
         {@const columnItems = visible.filter(i => i.status === status)}
         <!-- Native drag/drop is an additional input; the same action is available through Alt+arrows and the editor. -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <section class="kanban-column" class:drop-target={dragging && items.find(i => i.id === dragging)?.status !== status} aria-label={`${label(status)} column`} ondragover={event => { if (dragging && !readonly) event.preventDefault(); }} ondrop={event => { event.preventDefault(); if (dragging) void changeStatus(dragging, status); }}>
+        <section data-column={status} class="kanban-column" class:drop-target={dragging && items.find(i => i.id === dragging)?.status !== status} aria-label={`${label(status)} column`} ondragover={event => { if (dragging && !readonly) event.preventDefault(); }} ondrop={event => { event.preventDefault(); if (dragging) void changeStatus(dragging, status); }}>
           <div class="column-header"><button id={`column-${status}`} class="column-focus" tabindex={activeColumn === status && !selected ? 0 : -1} onfocus={() => { activeColumn = status; selectedId = ''; }} onclick={() => focusColumn(status, 0)}><span class={`status-icon ${status}`}><Icon name={status} size={14} /></span><h2>{label(status)}</h2><span class="column-count" title="Loaded items">{columnItems.length}{cursors[status] ? '+' : ''}</span></button>{#if !readonly}<button class="icon-button column-add" aria-label={`Add item to ${label(status)}`} title="Add item (C)" onfocus={() => { activeColumn = status; selectedId = ''; }} onclick={() => create(status)}><Icon name="plus" size={15} /></button>{/if}</div>
           <div class="column-scroll">
             {#if quickStatus === status}<form class="quick-create" onsubmit={event => quickCreate(event, (event.submitter as HTMLButtonElement)?.value === 'edit')}><textarea id="quick-title" aria-label="New item title" placeholder="Item title" rows="2" maxlength="300" required bind:value={quickTitle} disabled={creating || readonly} onkeydown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); const form = event.currentTarget.form; form?.requestSubmit(event.ctrlKey || event.metaKey ? form.querySelector<HTMLButtonElement>('[value=edit]')! : undefined); } }}></textarea><div><span class="hint"><kbd>↵</kbd> add <kbd>esc</kbd> cancel</span><button type="button" class="text-button mobile-only quick-cancel" onclick={() => { quickStatus = null; quickTitle = ''; }}>Cancel</button><button type="submit" value="edit" class="text-button" title="Add and edit (Ctrl/Cmd+Enter)" disabled={creating || readonly || !quickTitle.trim()}>Add & edit</button><button class="small-button" disabled={creating || readonly || !quickTitle.trim()}>{creating ? 'Adding…' : 'Add'}</button></div></form>{/if}
             <ul class="cards" aria-label={`${label(status)} items`}>
               {#each columnItems as item (item.id)}
-                <li data-card={item.id} animate:flip={{ duration: duration(220) }} in:arrive><button id={`ticket-${item.id}`} data-ticket={item.id} tabindex={selectedId === item.id ? 0 : -1} class="card" class:drop-before={dropTarget === item.id && dropBefore} class:drop-after={dropTarget === item.id && !dropBefore} class:selected={selectedId === item.id} class:opened={openId === item.id} draggable={!readonly && !moving && !dirty && !coarse} ondragstart={event => { dragging = item.id; selectedId = item.id; event.dataTransfer?.setData('text/plain', item.id); }} ondragend={() => { dragging = ''; dropTarget = ''; }}
+                <li data-card={item.id} animate:flip={{ duration: duration(220) }} in:arrive><button id={`ticket-${item.id}`} data-ticket={item.id} tabindex={selectedId === item.id ? 0 : -1} class="card" class:lifted={lifted?.item.id === item.id} class:drop-before={dropTarget === item.id && dropBefore} class:drop-after={dropTarget === item.id && !dropBefore} class:selected={selectedId === item.id} class:opened={openId === item.id} draggable={!readonly && !moving && !dirty && !coarse} ondragstart={event => { dragging = item.id; selectedId = item.id; event.dataTransfer?.setData('text/plain', item.id); }} ondragend={() => { dragging = ''; dropTarget = ''; }}
                   ondragover={event => { if (!dragging || dragging === item.id || readonly) return; event.preventDefault(); event.stopPropagation(); dropTarget = item.id; const rect = event.currentTarget.getBoundingClientRect(); dropBefore = event.clientY < rect.top + rect.height / 2; }}
                   ondragleave={() => { if (dropTarget === item.id) dropTarget = ''; }}
                   ondrop={event => { event.preventDefault(); event.stopPropagation(); const current = items.find(i => i.id === dragging); if (current) void moveTo(current, item, dropBefore); }}
                   onfocus={() => { selectedId = item.id; activeColumn = status; preferredRow = columnItems.indexOf(item); }} onclick={() => { if (suppressClick) { suppressClick = false; return; } void openItem(item.id); }} onpointerdown={event => pressStart(event, item)} onpointermove={pressMove} onpointerup={pressEnd} onpointercancel={pressEnd} oncontextmenu={event => { if (coarse) event.preventDefault(); }} aria-label={`TK-${item.id}: ${item.title}`} aria-current={openId === item.id ? 'true' : undefined}>
                   <span class="card-title">{item.title}</span>
-                  <div class="card-meta"><span class={`item-type ${item.type}`} title={label(item.type)}><Icon name={item.type} size={12} /></span><span class="item-id">#{item.id}</span><span class="card-tags">{#each item.tags.slice(0, 2) as tag}<span>{tag}</span>{/each}{#if item.tags.length > 2}<span>+{item.tags.length - 2}</span>{/if}</span><span class="card-assignees">{#each item.assignees.slice(0, 2) as id}<span class="mini-avatar" title={users.find(u => u.id === id)?.name || id}>{initials(users.find(u => u.id === id)?.name || id)}</span>{/each}{#if item.assignees.length > 2}<span class="muted">+{item.assignees.length - 2}</span>{/if}</span></div>
+                  <div class="card-meta"><span class={`item-type ${item.type}`} title={label(item.type)}><Icon name={item.type} size={12} /></span><span class="item-id">#{item.id}</span><span class="card-tags">{#each item.tags.slice(0, 2) as tag}<span>{tag}</span>{/each}{#if item.tags.length > 2}<span>+{item.tags.length - 2}</span>{/if}</span><span class="card-assignees">{#each item.assignees.slice(0, 2) as id}<span class="mini-avatar" style:--hue={avatarHue(id)} title={users.find(u => u.id === id)?.name || id}>{initials(users.find(u => u.id === id)?.name || id)}</span>{/each}{#if item.assignees.length > 2}<span class="muted">+{item.assignees.length - 2}</span>{/if}</span></div>
                 </button></li>
               {/each}
             </ul>
@@ -940,22 +1071,24 @@
   </dialog>
 {/if}
 {#if deleteTarget}
-  <dialog class="delete-dialog" bind:this={deleteDialog} aria-labelledby="delete-title" aria-describedby="delete-description" oncancel={event => { event.preventDefault(); void cancelDelete(); }}>
-    <h2 id="delete-title">Delete TK-{deleteTarget.id}?</h2>
-    <p class="delete-ticket-title">{deleteTarget.title}</p>
-    <p id="delete-description">This permanently deletes the ticket and its activity. Any unsaved edits to this ticket will be discarded. This cannot be undone.</p>
-    {#if deleteError}<p class="error-banner" role="alert">{deleteError}</p>{/if}
-    <div class="button-row"><button class="small-button" disabled={deleting} onclick={cancelDelete}>Cancel</button><button class="primary-button danger-button" disabled={deleting || readonly || authExpired || deleteConflict} onclick={deleteItem}>{deleting ? 'Please wait…' : 'Delete ticket'}</button></div>
+  <dialog class="dlg delete-dialog" bind:this={deleteDialog} aria-labelledby="delete-title" aria-describedby="delete-description" oncancel={event => { event.preventDefault(); void cancelDelete(); }}>
+    <header class="dlg-head"><h2 id="delete-title">Delete TK-{deleteTarget.id}?</h2></header>
+    <div class="dlg-body">
+      <div class="dlg-callout danger"><strong class="delete-ticket-title">{deleteTarget.title}</strong><p id="delete-description">Deletes the ticket and its activity, discarding unsaved edits. Can't be undone.</p></div>
+      {#if deleteError}<p class="error-banner" role="alert">{deleteError}</p>{/if}
+    </div>
+    <footer class="dlg-foot"><div class="actions"><button class="small-button" disabled={deleting} onclick={cancelDelete}>Cancel</button><button class="primary-button danger-button" disabled={deleting || readonly || authExpired || deleteConflict} onclick={deleteItem}>{deleting ? 'Please wait…' : 'Delete ticket'}</button></div></footer>
   </dialog>
 {/if}
-{#if installing && user && !authExpired}<InstallCLI email={user.email} onclose={() => installing = false} />{/if}
+{#if installing && user && !authExpired}<SetupDialog email={user.email} onclose={() => installing = false} />{/if}
 {#if account && user && !authExpired}<AccountDialog {user} initialView={account} onchange={userChanged} onclose={closeAccount} onlogout={async () => { await closeAccount(); await logout(); }} beforePasswordChange={guardDraft} onpasswordchanged={passwordChanged} />{/if}
+{#if managingTags && user && !authExpired}<TagsDialog {readonly} beforeDelete={guardDraft} ondeleted={tagDeleted} onclose={closeTags} />{/if}
 {#if inviting && user?.role === 'admin' && !authExpired}<PeopleDialog {users} currentUserId={user.id} onchange={userChanged} onclose={() => inviting = false} />{/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}
-{#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>
+{#if help}<dialog class="dlg wide help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><header class="dlg-head"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={16} /></button></header>
   {#each [
     { title: 'Move around', keys: [['↑ ↓ / j k', 'Previous / next ticket'], ['← → / h l', 'Previous / next column'], ['Home / gg · End / G', 'First · last loaded ticket'], ['1–7', 'Jump to a column'], ['Enter', 'Open ticket'], ['[ ] / j k', 'Previous / next in details'], ['F6', 'Switch board / details or search']] },
     { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['Delete', 'Delete ticket (with confirmation)'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] },
     { title: 'Find and control', keys: [['/', 'Search loaded tickets'], ['Enter / ↓ in search', 'Focus first result'], ['Ctrl / ⌘ K', 'Commands'], ['↑ ↓ / Ctrl J K', 'Navigate a command menu'], ['R', 'Refresh and apply order'], ['Escape', 'Leave field, close or cancel'], ['?', 'This guide']] },
   ] as group}<h3>{group.title}</h3><dl>{#each group.keys as [keys, action]}<div><dt>{action}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{/each}
-  <p>Letter shortcuts pause while typing. Escape leaves an editor field first; edits save automatically; failed saves stay safe. Tab reaches controls; arrow keys move through tickets. Search and jumps cover loaded tickets.</p></dialog>{/if}
+  <footer class="dlg-foot"><span class="note">Letter keys pause while typing · edits save automatically</span></footer></dialog>{/if}

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export interface Option { value: string; label: string; icon?: string; iconClass?: string; avatar?: string; hint?: string; description?: string }
+  export interface Option { value: string; label: string; icon?: string; iconClass?: string; avatar?: string; avatarHue?: number; hint?: string; description?: string; action?: () => void }
   let sequence = 0;
 </script>
 
@@ -41,6 +41,7 @@
   function choose(index: number) {
     const option = options[index];
     hide();
+    if (option?.action) { option.action(); return; }
     if (!option || (option.value === value && variant !== 'add')) return;
     if (variant !== 'add') value = option.value;
     onchange?.(option.value);
@@ -114,7 +115,7 @@
   {#if showPlaceholder}
     {#if placeholderIcon}<Icon name={placeholderIcon} size={13} />{/if}<span class="select-value">{placeholder || current?.label || ''}</span>
   {:else if current}
-    {#if current.avatar}<span class="mini-avatar">{current.avatar}</span>{:else if current.icon}<span class={current.iconClass || ''}><Icon name={current.icon} size={14} /></span>{/if}<span class="select-value">{current.label}</span>
+    {#if current.avatar}<span class="mini-avatar" style:--hue={current.avatarHue}>{current.avatar}</span>{:else if current.icon}<span class={current.iconClass || ''}><Icon name={current.icon} size={14} /></span>{/if}<span class="select-value">{current.label}</span>
   {/if}
   {#if variant !== 'add'}<span class="select-chevron"><Icon name="down" size={13} /></span>{/if}
 </button>
@@ -123,9 +124,9 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div bind:this={popup} id={`${id}-list`} class="select-popup" popover="manual" role="listbox" aria-label={`${label} options`} tabindex="-1">
     {#each options as option, i (option.value)}
-      <div id={`${id}-${i}`} class="select-option" class:active={i === active} role="option" tabindex="-1" aria-selected={option.value === value}
+      <div id={`${id}-${i}`} class="select-option" class:active={i === active} class:select-action={Boolean(option.action)} role="option" tabindex="-1" aria-selected={option.value === value}
         onpointermove={() => active = i} onpointerdown={event => event.preventDefault()} onclick={() => choose(i)}>
-        {#if option.avatar}<span class="mini-avatar">{option.avatar}</span>{:else if option.icon}<span class={option.iconClass || ''}><Icon name={option.icon} size={14} /></span>{/if}
+        {#if option.avatar}<span class="mini-avatar" style:--hue={option.avatarHue}>{option.avatar}</span>{:else if option.icon}<span class={option.iconClass || ''}><Icon name={option.icon} size={14} /></span>{/if}
         {#if option.description}<span class="select-label select-stack"><span>{option.label}</span><small>{option.description}</small></span>{:else}<span class="select-label">{option.label}</span>{/if}
         {#if option.hint}<span class="select-hint">{option.hint}</span>{/if}
         <span class="select-check">{#if option.value === value && !(option.value === '' && variant === 'add')}<Icon name="check" size={13} />{/if}</span>
@@ -133,3 +134,7 @@
     {/each}
   </div>
 {/if}
+
+<style>
+  .select-action { border-top: 1px solid var(--line-strong); margin-top: 4px; }
+</style>

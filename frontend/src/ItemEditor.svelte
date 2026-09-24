@@ -1,11 +1,17 @@
 <script lang="ts">
   import { untrack, onDestroy } from 'svelte';
-  import { api, APIError, statuses, label, initials } from './api';
+  import { api, APIError, statuses, label, initials, avatarHue } from './api';
   import type { Item, ItemType, Status, User, Activity, ActivityPage } from './api';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
   import { slide } from 'svelte/transition';
   import { duration } from './motion';
+
+  function autosize(node: HTMLTextAreaElement, _value: string) {
+    const fit = () => { if (CSS.supports('field-sizing', 'content')) return; node.style.height = 'auto'; node.style.height = `${node.scrollHeight}px`; };
+    fit();
+    return { update: fit };
+  }
 
   let { item, users, tags, readonly = false, deleted = false, onmissing, ondelete, currentUserId, suspended = false, canPrevious = false, canNext = false, onnavigate, onclose, onsave, ondirty }:
     { item: Item; users: User[]; tags: string[]; readonly?: boolean; deleted?: boolean; onmissing: () => void; ondelete: () => void; currentUserId: string; suspended?: boolean; canPrevious?: boolean; canNext?: boolean;
@@ -183,7 +189,10 @@
   </div>
   <form class="editor-form" onsubmit={event => { event.preventDefault(); void flush(true); }} oncompositionstart={() => composing = true} oncompositionend={() => composing = false}>
     <div class="detail-content">
-      <input class="title-editor" aria-label="Ticket title" placeholder="Title" maxlength="300" required bind:value={title} onblur={() => void save()} readonly={deleted} disabled={readonly && !deleted} />
+      <!-- A wrapping single-line title: Enter saves like a text field, pasted line breaks become spaces. -->
+      <textarea class="title-editor" rows="1" aria-label="Ticket title" placeholder="Title" maxlength="300" required spellcheck="false" bind:value={title} use:autosize={title} onblur={() => void save()} readonly={deleted} disabled={readonly && !deleted}
+        oninput={event => { if (/[\r\n]/.test(event.currentTarget.value)) title = event.currentTarget.value.replace(/\s*[\r\n]+\s*/g, ' '); }}
+        onkeydown={event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}></textarea>
 
       {#if conflict && !deleted}
         <div class="conflict" role="status">
@@ -200,8 +209,8 @@
         <div class="property"><span>Status</span><Select label="Ticket status" variant="property" bind:value={status} disabled={!canWrite} options={statuses.map(value => ({ value, label: label(value), icon: value, iconClass: `status-icon ${value}` }))} /></div>
         <div class="property"><span>Type</span><Select label="Ticket type" variant="property" bind:value={type} disabled={!canWrite} options={(['task', 'bug', 'feature'] as const).map(value => ({ value, label: label(value), icon: value, iconClass: `item-type ${value}` }))} /></div>
         <div class="property"><span>Assignees</span><div class="property-values">
-          {#each assignees as id}<span class="person-chip"><span class="mini-avatar">{initials(users.find(u => u.id === id)?.name || id)}</span>{users.find(u => u.id === id)?.name || `User ${id}`}{#if canWrite}<button type="button" aria-label={`Remove assignee ${users.find(u => u.id === id)?.name || id}`} onclick={() => assignees = assignees.filter(a => a !== id)}><Icon name="close" size={12} /></button>{/if}</span>{/each}
-          {#if canWrite}<Select label="Add assignee" variant="add" placeholder="Assign" placeholderIcon="add-person" value="" disabled={users.every(u => u.removed_at || assignees.includes(u.id))} onchange={id => { if (id) assignees = [...assignees, id]; }} options={users.filter(u => !u.removed_at && !assignees.includes(u.id)).map(u => ({ value: u.id, label: u.name, avatar: initials(u.name), hint: u.id === currentUserId ? 'me' : undefined }))} />{:else if !assignees.length}<span class="muted">Unassigned</span>{/if}
+          {#each assignees as id}<span class="person-chip"><span class="mini-avatar" style:--hue={avatarHue(id)}>{initials(users.find(u => u.id === id)?.name || id)}</span>{users.find(u => u.id === id)?.name || `User ${id}`}{#if canWrite}<button type="button" aria-label={`Remove assignee ${users.find(u => u.id === id)?.name || id}`} onclick={() => assignees = assignees.filter(a => a !== id)}><Icon name="close" size={12} /></button>{/if}</span>{/each}
+          {#if canWrite}<Select label="Add assignee" variant="add" placeholder="Assign" placeholderIcon="add-person" value="" disabled={users.every(u => u.removed_at || assignees.includes(u.id))} onchange={id => { if (id) assignees = [...assignees, id]; }} options={users.filter(u => !u.removed_at && !assignees.includes(u.id)).map(u => ({ value: u.id, label: u.name, avatar: initials(u.name), avatarHue: avatarHue(u.id), hint: u.id === currentUserId ? 'me' : undefined }))} />{:else if !assignees.length}<span class="muted">Unassigned</span>{/if}
         </div></div>
         <div class="property"><span>Tags</span><div class="property-values">
           {#each itemTags as tag}<span class="tag-chip">{tag}{#if canWrite}<button type="button" aria-label={`Remove tag ${tag}`} onclick={() => itemTags = itemTags.filter(t => t !== tag)}><Icon name="close" size={12} /></button>{/if}</span>{/each}

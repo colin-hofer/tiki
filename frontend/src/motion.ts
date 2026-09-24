@@ -6,13 +6,20 @@ export const duration = (ms: number) => reduced() ? 0 : ms;
 
 // Card positions from just before a DOM update, so a card re-created in another column can glide from its old slot.
 const rects = new Map<string, DOMRect>();
+// A touch drag drops a card from wherever the finger is, so its arrival starts there instead of its old slot.
+const pinned = new Map<string, { rect: DOMRect; used: () => void }>();
+export function pin(id: string, rect: DOMRect, used: () => void) { pinned.set(id, { rect, used }); }
+export function unpin(id: string) { pinned.delete(id); }
 export function capture(root: ParentNode = document) {
   rects.clear();
   for (const node of root.querySelectorAll<HTMLElement>('[data-card]')) rects.set(node.dataset.card!, node.getBoundingClientRect());
+  for (const [id, { rect }] of pinned) rects.set(id, rect);
 }
 
 export function arrive(node: HTMLElement): TransitionConfig {
   const from = rects.get(node.dataset.card || '');
+  const drop = pinned.get(node.dataset.card || '');
+  if (drop) { pinned.delete(node.dataset.card || ''); queueMicrotask(drop.used); }
   rects.delete(node.dataset.card || '');
   if (!from) return { duration: duration(160), easing: cubicOut, css: t => `opacity: ${t}; transform: translateY(${(1 - t) * 4}px)` };
   const to = node.getBoundingClientRect();

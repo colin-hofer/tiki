@@ -20,6 +20,9 @@ export interface Updates { items?: Item[]; users?: boolean; reset?: boolean }
 
 export const label = (value: string) => value.replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
 export const initials = (name: string) => name.split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+// A stable hue per user id. Neighbouring palette entries contrast, so sequential ids look distinct.
+const avatarHues = [255, 50, 165, 345, 85, 200, 20, 135, 300];
+export const avatarHue = (id: string) => avatarHues[[...id].reduce((hash, c) => (hash * 31 + c.charCodeAt(0)) >>> 0, 7) % avatarHues.length];
 
 let token = '';
 try { token = sessionStorage.getItem('tiki.session') || ''; } catch { /* Private storage can be disabled. */ }

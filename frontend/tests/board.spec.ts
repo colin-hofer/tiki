@@ -48,7 +48,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
     };
   });
-  const state = { items: rows, failWrites: false, writes: 0, viewer: false, listCalls: 0, boardCalls: 0,
+  const state = { items: rows, tags: ['api', 'frontend'], failWrites: false, writes: 0, viewer: false, listCalls: 0, boardCalls: 0,
     beforeWrite: null as (() => Promise<void>) | null, beforeReply: null as ((item: Item) => Promise<unknown>) | null,
     bodies: [] as Record<string, unknown>[], methods: [] as string[],
     notify: (kind = 'change', updates: Updates = { items: rows }, count = 1): Promise<unknown[]> =>
@@ -62,7 +62,16 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
     if (path === '/auth/me') return reply({ ...user, role: state.viewer ? 'viewer' : 'member' });
     if (path === '/auth/logout') return reply({ logged_out: true });
     if (path === '/users') return reply({ users: [{ ...user, role: state.viewer ? 'viewer' : 'member' }, { id: '2', name: 'Build Agent', role: 'member' }] });
-    if (path === '/tags') return reply({ tags: ['api', 'frontend'] });
+    const tagPage = (after = '', limit = 200) => {
+      const matching = [...state.tags].sort().filter(tag => tag > after);
+      const tags = matching.slice(0, limit);
+      return { tags, usage: Object.fromEntries(tags.map(tag => [tag, state.items.filter(item => item.tags.includes(tag)).length])), ...(matching.length > limit ? { next_after: tags.at(-1) } : {}) };
+    };
+    if (path === '/tags' && request.method() === 'GET') {
+      const result = tagPage(url.searchParams.get('after') || '', Number(url.searchParams.get('limit') || 200));
+      const { usage, ...page } = result;
+      return reply(url.searchParams.get('usage') === 'true' ? result : page);
+    }
     if (path.endsWith('/activity')) return reply({ activity: [] });
     const list = (status: string | null, limit: number, cursor = '') => {
       const matching = state.items.filter(i => (!status || i.status === status) && (!url.searchParams.get('tag') || i.tags.includes(url.searchParams.get('tag')!)) && (!url.searchParams.get('assignee') || (url.searchParams.get('assignee') === 'none' ? !i.assignees.length : i.assignees.includes(url.searchParams.get('assignee')!)))).sort((a, b) => a.priority - b.priority);
@@ -74,7 +83,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       const selected = url.searchParams.get('status');
       const columns = Object.fromEntries(statuses.filter(status => !selected || status === selected).map(status =>
         [status, list(status, !selected && ['backlog', 'complete', 'void'].includes(status) ? 20 : 100)]));
-      return reply({ columns, users: { users: [{ ...user, role: state.viewer ? 'viewer' : 'member' }, { id: '2', name: 'Build Agent', role: 'member' }] }, tags: { tags: ['api', 'frontend'] } });
+      return reply({ columns, users: { users: [{ ...user, role: state.viewer ? 'viewer' : 'member' }, { id: '2', name: 'Build Agent', role: 'member' }] }, tags: tagPage() });
     }
     if (path === '/items' && request.method() === 'GET') {
       state.listCalls++;
@@ -84,6 +93,13 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       state.writes++; state.bodies.push(body); state.methods.push(request.method());
       await state.beforeWrite?.();
       if (state.failWrites) return reply({ error: { code: 'internal', message: 'Save failed' } }, 500);
+    }
+    if (path === '/tags' && request.method() === 'DELETE') {
+      if (!state.tags.includes(body.name)) return reply({ error: { code: 'not_found', message: 'Tag not found' } }, 404);
+      let count = 0;
+      for (const item of state.items) if (item.tags.includes(body.name)) { item.tags = item.tags.filter(tag => tag !== body.name); item.version++; count++; }
+      state.tags = state.tags.filter(tag => tag !== body.name);
+      return reply({ deleted: true, removed_from: count });
     }
     if (path === '/items' && request.method() === 'POST') {
       const created = { ...item(Math.max(...state.items.map(i => Number(i.id)), 0) + 1, body.status), ...body };
@@ -562,9 +578,10 @@ test.describe('phone layout', () => {
 
     const card = page.locator('#ticket-3'); const box = (await card.boundingBox())!;
     await card.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: box.x + 20, clientY: box.y + 20, isPrimary: true });
+    await expect(page.locator('.card-ghost')).toHaveCount(1);
+    await card.dispatchEvent('pointerup', { pointerType: 'touch' });
     const sheet = page.getByRole('dialog', { name: 'Actions for TK-3' });
     await expect(sheet).toBeVisible();
-    await card.dispatchEvent('pointerup', { pointerType: 'touch' }).catch(() => {});
     await sheet.getByRole('button', { name: 'Code review', exact: true }).click();
     await expect.poll(() => state.items.find(i => i.id === '3')?.status).toBe('code_review');
     await expect(tabs.getByRole('button', { name: /^In progress/ })).toHaveAttribute('aria-current', 'true');
@@ -584,15 +601,46 @@ test.describe('phone layout', () => {
     await expect(panel).toHaveCount(0);
     const target = page.locator('#ticket-10'); const targetBox = (await target.boundingBox())!;
     await target.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: targetBox.x + 20, clientY: targetBox.y + 20, isPrimary: true });
+    await expect(page.locator('.card-ghost')).toHaveCount(1);
+    await target.dispatchEvent('pointerup', { pointerType: 'touch' });
     const actions = page.getByRole('dialog', { name: 'Actions for TK-10' });
     await expect(actions).toBeVisible();
-    await target.dispatchEvent('pointerup', { pointerType: 'touch' });
     await actions.getByRole('button', { name: 'Delete ticket…', exact: true }).click();
     const confirmation = page.getByRole('dialog', { name: 'Delete TK-10?' });
     await expect(confirmation).toBeInViewport();
     await confirmation.getByRole('button', { name: 'Delete ticket', exact: true }).click();
     await expect(target).toHaveCount(0);
     expect(state.methods.at(-1)).toBe('DELETE');
+  });
+
+  test('press and hold lifts a card; drag vertically to reorder and to an edge to change status', async ({ page, context }) => {
+    const state = await mock(context); await signIn(page);
+    const tabs = page.getByRole('group', { name: 'Statuses' });
+    await tabs.getByRole('button', { name: /^In progress/ }).click();
+    const column = page.getByRole('region', { name: 'In progress column', exact: true });
+    await expect(column.locator('.card').first()).toHaveAttribute('id', 'ticket-3');
+    const touch = { pointerType: 'touch', isPrimary: true };
+    const drag = async (id: string, to: (box: { x: number; y: number; width: number; height: number }) => { clientX: number; clientY: number }, hold = 0) => {
+      const card = page.locator(`#ticket-${id}`); const box = (await card.boundingBox())!;
+      await card.dispatchEvent('pointerdown', { ...touch, clientX: box.x + 20, clientY: box.y + 20 });
+      await expect(page.locator('.card-ghost')).toHaveCount(1);
+      const end = to(box);
+      for (let step = 1; step <= 4; step++) await page.locator('body').dispatchEvent('pointermove', { ...touch, clientX: box.x + 20 + (end.clientX - box.x - 20) * step / 4, clientY: box.y + 20 + (end.clientY - box.y - 20) * step / 4 });
+      if (hold) await page.waitForTimeout(hold);
+      await page.locator('body').dispatchEvent('pointerup', { ...touch, ...end });
+    };
+
+    // Down past the next card reorders within the column.
+    const below = (await page.locator('#ticket-10').boundingBox())!;
+    await drag('3', box => ({ clientX: box.x + 20, clientY: below.y + below.height - 4 }));
+    await expect(column.locator('.card').first()).toHaveAttribute('id', 'ticket-10');
+    await expect(page.locator('.card-ghost')).toHaveCount(0);
+
+    // Holding at the right edge switches to the next status; dropping there changes status.
+    await drag('10', () => ({ clientX: 386, clientY: 200 }), 700);
+    await expect.poll(() => state.items.find(i => i.id === '10')?.status).toBe('code_review');
+    await expect(tabs.getByRole('button', { name: /^Code review/ })).toHaveAttribute('aria-current', 'true');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
 
@@ -857,5 +905,92 @@ test('Delete edits text normally; commands expose deletion and viewers cannot de
   await page.locator('.detail').focus();
   await page.keyboard.press('Delete');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(state.writes).toBe(0);
+});
+
+test('tag manager removes an in-use tag everywhere, clears its filter, and updates open details', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  const filter = page.getByRole('combobox', { name: 'Filter tag', exact: true });
+  await filter.click();
+  await page.getByRole('option', { name: 'frontend', exact: true }).click();
+  await page.locator('#ticket-2').click();
+  await filter.click(); await filter.press('End'); await filter.press('Enter');
+  const manager = page.getByRole('dialog', { name: 'Manage tags', exact: true });
+  await expect(manager.getByLabel('Search tags')).toBeFocused();
+  await manager.getByLabel('Search tags').fill('frontend');
+  await expect(manager.getByRole('listitem')).toContainText('6 tickets');
+  await manager.getByLabel('Search tags').press('ArrowDown'); await page.keyboard.press('Enter');
+  const confirmation = page.getByRole('dialog', { name: 'Delete tag?', exact: true });
+  await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(manager.getByRole('button', { name: 'Delete tag frontend', exact: true })).toBeFocused();
+  expect(state.writes).toBe(0);
+  await page.keyboard.press('Enter'); state.failWrites = true;
+  await confirmation.getByRole('button', { name: 'Delete tag', exact: true }).click();
+  await expect(confirmation.getByRole('alert')).toHaveText('Save failed');
+  expect(state.items.filter(item => item.tags.includes('frontend'))).toHaveLength(6);
+  state.failWrites = false;
+  await confirmation.getByRole('button', { name: 'Delete tag', exact: true }).click();
+  await expect(manager.getByRole('status')).toHaveText('Deleted #frontend. Tickets were kept.');
+  await expect(page).not.toHaveURL(/tag=frontend/);
+  await expect(page.locator('.card')).toHaveCount(12);
+  await expect(page.getByRole('button', { name: 'Remove tag frontend', exact: true })).toHaveCount(0);
+  expect(state.items).toHaveLength(12);
+  expect(state.items.some(item => item.tags.includes('frontend'))).toBe(false);
+  await page.keyboard.press('Escape');
+  await expect(filter).toBeFocused(); await filter.click();
+  await expect(page.getByRole('option', { name: 'frontend', exact: true })).toHaveCount(0);
+});
+
+test('tag manager handles unused tags, pagination, special names, and the command menu on mobile', async ({ page, context }) => {
+  const state = await mock(context);
+  state.tags.push('__proto__', ...Array.from({ length: 205 }, (_, i) => `tag-${String(i).padStart(3, '0')}`), 'z/repo');
+  await page.setViewportSize({ width: 390, height: 844 }); await signIn(page);
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Find a command' }).fill('Manage tags');
+  await page.keyboard.press('Enter');
+  const manager = page.getByRole('dialog', { name: 'Manage tags', exact: true });
+  await expect(manager).toBeInViewport();
+  await manager.getByLabel('Search tags').fill('__proto__');
+  await expect(manager.getByRole('listitem')).toContainText('0 tickets');
+  await manager.getByLabel('Search tags').fill('z/repo');
+  await expect(manager.getByRole('listitem')).toContainText('0 tickets');
+  await manager.getByRole('button', { name: 'Delete tag z/repo', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Delete tag?', exact: true });
+  await expect(confirmation).toBeInViewport();
+  await confirmation.getByRole('button', { name: 'Delete tag', exact: true }).click();
+  await expect(manager.getByRole('status')).toHaveText('Deleted #z/repo. Tickets were kept.');
+  expect(state.bodies.at(-1)).toEqual({ name: 'z/repo' });
+  expect(state.items).toHaveLength(12);
+});
+
+test('remote tag deletion clears obsolete filters and preserves unsaved ticket edits', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  const filter = page.getByRole('combobox', { name: 'Filter tag', exact: true });
+  await filter.click(); await page.getByRole('option', { name: 'frontend', exact: true }).click();
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Description', { exact: true }).fill('Keep this edit through tag deletion');
+  state.tags = state.tags.filter(tag => tag !== 'frontend');
+  for (const item of state.items) if (item.tags.includes('frontend')) { item.tags = []; item.version++; }
+  await state.notify('change', { reset: true });
+  await expect(page).not.toHaveURL(/tag=frontend/);
+  await expect(page.getByText('Updated by someone else')).toBeVisible();
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Keep this edit through tag deletion');
+  await page.getByRole('button', { name: 'Keep my edits on latest' }).click();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  const current = state.items.find(item => item.id === '2')!;
+  expect(current.description).toBe('Keep this edit through tag deletion');
+  expect(current.tags).toEqual([]);
+});
+
+test('viewers cannot manage tags', async ({ page, context }) => {
+  const state = await mock(context); state.viewer = true; await signIn(page);
+  const filter = page.getByRole('combobox', { name: 'Filter tag', exact: true });
+  await filter.click();
+  await expect(page.getByRole('option', { name: 'Manage tags…', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Commands', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Find a command' }).fill('Manage tags');
+  await expect(page.getByText('No matching commands.')).toBeVisible();
   expect(state.writes).toBe(0);
 });

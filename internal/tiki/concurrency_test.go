@@ -136,11 +136,11 @@ func TestDirectoryPaginationHasNoPhantomPage(t *testing.T) {
 	if err != nil || len(users.Users) != 1 || users.NextAfter != 0 {
 		t.Fatalf("users: %+v, %v", users, err)
 	}
-	tags, err := s.Tags(t.Context(), "", 1)
+	tags, err := s.Tags(t.Context(), "", 1, false)
 	if err != nil || len(tags.Tags) != 1 || tags.NextAfter != "a" {
 		t.Fatalf("tags: %+v, %v", tags, err)
 	}
-	tags, err = s.Tags(t.Context(), tags.NextAfter, 1)
+	tags, err = s.Tags(t.Context(), tags.NextAfter, 1, false)
 	if err != nil || len(tags.Tags) != 1 || tags.Tags[0] != "b" || tags.NextAfter != "" {
 		t.Fatalf("final tags: %+v, %v", tags, err)
 	}

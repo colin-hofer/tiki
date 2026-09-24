@@ -2,6 +2,10 @@
 
 A Go CLI and shared HTTP server for tracking work. Items have a sortable `float64` priority, multiple assignees, and generic tags. The architecture and roadmap are in [PLAN.md](PLAN.md).
 
+## Agent skill
+
+The reusable [Tiki skill](skills/tiki/SKILL.md) teaches agents the current CLI, explicit-version edits, pagination, and recovery from conflicts or uncertain writes. Install the `skills/tiki` directory in your agent's skill directory; for Codex, use `$CODEX_HOME/skills` (default `~/.codex/skills`) and invoke `$tiki`. It uses your installed CLI and authenticated workspace.
+
 ## Local development
 
 Install Go (the version in `go.mod`), Node.js 22.12+ with npm, and Make. From the repository root, run:
@@ -69,9 +73,9 @@ The default server is `http://127.0.0.1:8080`. Save your workspace address once,
 
 Login with `--server URL` also saves that address. Selection order is `--server`, then `TIKI_SERVER`, then saved config, then the local default. The server setting lives in `tiki/config.json` under the OS configuration directory (`~/.config` on Linux) and survives logout and password changes. Existing session-only settings are still recognized. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
 
-## Install the CLI from your workspace
+## Install the CLI and agent skill
 
-Open **Install CLI** in the web toolbar or command menu, then copy the install command into your terminal. Every role can use it. For example:
+Open **CLI & agents** in the web toolbar, or **Install CLI & agent skill** in the command menu. The **CLI** tab offers separate install and sign-in commands for the current workspace; the **Agent skill** tab installs the Tiki skill for Codex. Every role can use both tabs. For example:
 
 ```sh
 curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com'
@@ -81,6 +85,14 @@ tiki auth login --email you@example.com
 The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Run the command again to upgrade. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
 
 `make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` prepares the same downloads, which Vite serves through its existing API proxy. While the dev server is running, run `make cli` after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
+
+To install just the agent skill, including when the CLI is already installed:
+
+```sh
+curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com' --skill
+```
+
+This installs the bundled `SKILL.md` to `${CODEX_HOME:-$HOME/.codex}/skills/tiki`, verifies its checksum, and replaces an existing downloaded copy only after a successful download. Linked skills are left untouched; update their source instead. The skill uses the CLI and your saved sign-in. Invoke `$tiki` in Codex; start a new session if it has not appeared. The skill tab also links to the instructions for inspection or manual installation in another agent. Skill downloads work even when this server has no CLI binaries. `make dev` rebuilds the API when the skill changes; production embeds it at build time.
 
 ## Invite your team
 
@@ -137,7 +149,7 @@ For scripts and agents, `init`, `auth login`, and `user create` accept `--passwo
 
 One trailing line ending is removed; spaces within the password are preserved. `--json` never prompts or prints session secrets. Password changes are interactive in the CLI; automation can use the password-change API. Registration requires a valid administrator-created invite; there is no unrestricted sign-up or password-recovery endpoint. Administrators can also create accounts directly.
 
-Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, public invite inspection/claim, and CLI installer/download routes.
+Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, public invite inspection/claim, and CLI/skill installer and download routes.
 
 ## Current behavior
 
@@ -147,6 +159,7 @@ Login, password-change, invite inspection, and invite-claim requests share a lim
 - Ordering is workspace-wide. Tag/status filters show a subset of that order; moving relative to an item uses its neighbor in the full workspace. Repeated midpoint insertion eventually exhausts float precision, so the server atomically renumbers priorities while preserving order. That increments item versions and expires existing pagination cursors.
 - Assignment is a set: repeated `--assignee` flags on creation, then `--add-assignee`/`--remove-assignee`. Adding an existing member does not duplicate it. `item list --assignee ID` tests membership; `--assignee none` finds an empty set.
 - Tags replace separate project and label entities. Names are trimmed/lowercased and created on first use. Repeated `--tag` filters use AND. Use `--add-tag` and `--remove-tag` to edit membership, and `tag list` to discover names. Tags are not access-control boundaries.
+- Open **Manage tags** from the tag filter or command menu to search tags, see their ticket counts, and delete unused or in-use tags. Deletion removes the tag from every ticket while preserving tickets and history; the deleted tag is also removed from active filters.
 - API edits and moves require `version`. CLI `--if-version N` sends a version already read by the caller; otherwise the CLI fetches it immediately before submission. Agents editing previously read content should always pass that version. A stale edit exits with code 4 and reports the current version.
 - Lists contain metadata, tags, and assignees; `get` includes the description. Item lists default to 50 rows, cap at 200, and return `next_cursor`; pass it as `--cursor`. Users/tags/activity use `next_after` and `--after`. Pagination is live and may shift when items move. Each item permits up to 100 assignees and 100 tags.
 - Description input supports `--description` or `--body-file FILE` (`-` reads stdin), with a 256-KiB limit. Tag names allow up to 64 characters and titles up to 300.
@@ -162,8 +175,9 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/cli` | Available CLI platforms. |
-| GET | `/api/v1/cli/install.sh` | Public shell installer. |
+| GET | `/api/v1/cli/install.sh` | Public shell installer; `--skill` installs only the Codex skill. |
 | GET | `/api/v1/cli/downloads/{platform}.gz` | Public compressed CLI; `{platform}.sha256` contains its checksum. |
+| GET | `/api/v1/skills/tiki/SKILL.md` | Public bundled agent skill; `SKILL.md.sha256` contains its checksum. |
 | POST | `/api/v1/auth/login` | Sign in with email/password. |
 | GET / PATCH | `/api/v1/auth/me` | Get the signed-in user / update only their name with `{"name":"New Name"}` (1–200 UTF-8 bytes after trimming). |
 | POST | `/api/v1/auth/logout` | Revoke the current session. |
@@ -180,7 +194,8 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | DELETE | `/api/v1/items/{id}` | Member/admin: permanently delete a ticket and its activity; JSON body `{"version":N}` required. Returns `{"deleted":true}`. |
 | POST | `/api/v1/items/{id}/move` | Move before/after another item. |
 | GET | `/api/v1/items/{id}/activity` | Read durable activity. |
-| GET | `/api/v1/tags` | List tags. |
+| GET | `/api/v1/tags` | List tags; `usage=true` includes a `usage` map of names to ticket counts. |
+| DELETE | `/api/v1/tags` | Member/admin: delete a tag everywhere with `{"name":"tag-name"}`; returns `{"deleted":true,"removed_from":N}`. Tickets and history are kept, affected ticket versions increase, and live clients refresh. |
 
 Create body:
 
