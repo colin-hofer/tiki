@@ -1,7 +1,6 @@
 package tiki
 
 import (
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -132,44 +131,5 @@ func TestConcurrentInviteClaimsAcrossStores(t *testing.T) {
 	}
 	if users != 2 || sessions != 1 {
 		t.Fatalf("partial or duplicate claim: users=%d sessions=%d", users, sessions)
-	}
-}
-
-func TestInviteMigrationPreservesVersion2Data(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(schema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec("INSERT INTO users(name,email,role,password_hash) VALUES(?,?,?,?)", "Existing", "existing@example.test", "admin", hashPassword(testPassword)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec("INSERT INTO sessions(user_id,hash,expires_at) VALUES(1,?,?)", hashSession(strings.Repeat("a", 43)), time.Now().Add(time.Hour).Unix()); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	user, err := s.Authenticate(t.Context(), strings.Repeat("a", 43))
-	if err != nil || user.Name != "Existing" {
-		t.Fatalf("migration lost session: %v", err)
-	}
-	if _, err := s.Login(t.Context(), user.Email, testPassword); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.CreateInvite(t.Context(), user.ID, "member", time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	var version int
-	if err := s.read.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
-		t.Fatalf("schema version=%d, %v", version, err)
 	}
 }

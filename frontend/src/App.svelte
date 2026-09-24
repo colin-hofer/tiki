@@ -7,7 +7,7 @@
   import CommandMenu from './CommandMenu.svelte';
   import Select from './Select.svelte';
   import Join from './Join.svelte';
-  import InviteDialog from './InviteDialog.svelte';
+  import PeopleDialog from './PeopleDialog.svelte';
   import { flip } from 'svelte/animate';
   import { arrive, capture, duration, panel, sheet } from './motion';
 
@@ -187,7 +187,7 @@
     ] : []),
     ...columns.map((status, index) => ({ id: `column-${status}`, label: `Go to ${label(status)} column`, hint: String(index + 1), run: () => focusColumn(status, preferredRow) })),
     { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: showHelp },
-    ...(user?.role === 'admin' ? [{ id: 'invite', label: 'Invite people', run: () => inviting = true }] : []),
+    ...(user?.role === 'admin' ? [{ id: 'people', label: 'Manage people', run: () => inviting = true }] : []),
     { id: 'logout', label: 'Sign out', run: () => void logout() },
   ]);
 
@@ -199,7 +199,7 @@
     if (palette === 'type') return ['task', 'bug', 'feature'].map(type => ({ id: type, label: label(type), hint: item.type === type ? 'Current' : '', run: () => void updateItem(item, { type }, `Type: ${label(type)}`) }));
     if (palette === 'assignee') return [
       { id: 'none', label: 'Unassign everyone', run: () => void updateItem(item, { remove_assignees: item.assignees }, 'Unassigned') },
-      ...users.map(u => ({ id: u.id, label: `${item.assignees.includes(u.id) ? 'Remove' : 'Assign'} ${u.name}${u.id === user?.id ? ' (me)' : ''}`, run: () => void updateItem(item, { [item.assignees.includes(u.id) ? 'remove_assignees' : 'add_assignees']: [u.id] }, 'Assignment updated') })),
+      ...users.filter(u => !u.removed_at || item.assignees.includes(u.id)).map(u => ({ id: u.id, label: `${item.assignees.includes(u.id) ? 'Remove' : 'Assign'} ${u.name}${u.removed_at ? ' (removed)' : ''}${u.id === user?.id ? ' (me)' : ''}`, run: () => void updateItem(item, { [item.assignees.includes(u.id) ? 'remove_assignees' : 'add_assignees']: [u.id] }, 'Assignment updated') })),
     ];
     return [
       { id: 'new-tag', label: 'Add a new tag…', run: () => void editSelected('Add tag') },
@@ -307,6 +307,17 @@
     ]);
     if (actor !== user?.id || authExpired || signal?.aborted) return;
     users = nextUsers; tags = nextTags;
+    const current = nextUsers.find(u => u.id === user?.id);
+    if (current) userChanged(current);
+  }
+
+  function userChanged(changed: User) {
+    users = users.map(u => u.id === changed.id ? changed : u);
+    if (user?.id === changed.id) {
+      if (changed.removed_at) { window.dispatchEvent(new Event('tiki:expired')); return; }
+      user = changed;
+      if (changed.role !== 'admin') inviting = false;
+    }
   }
 
   function stopLive() {
@@ -527,14 +538,14 @@
 
   async function quickCreate(event: SubmitEvent, edit = false) {
     event.preventDefault();
-    if (!quickTitle.trim() || !quickStatus || creating) return;
+    if (readonly || !quickTitle.trim() || !quickStatus || creating) return;
     creating = true; error = '';
     controller?.abort(); generation++; syncing = false; busy = false;
     try {
       const item = await api<Item>('/items', 'POST', {
         title: quickTitle, type: 'task', status: quickStatus,
         tags: filterTag ? [filterTag] : [],
-        assignees: filterAssignee && filterAssignee !== 'none' ? [filterAssignee] : [],
+        assignees: users.some(u => u.id === filterAssignee && !u.removed_at) ? [filterAssignee] : [],
       });
       quickTitle = ''; selectedId = item.id;
       await applySaved(item);
@@ -696,6 +707,18 @@
     const visibility = () => { if (document.hidden) { stopLive(); streamState = connection = 'paused'; } else startLive(); };
     const online = () => startLive();
     const unload = (event: BeforeUnloadEvent) => { if (dirty || quickTitle.trim()) event.preventDefault(); };
+    const hashchange = () => {
+      const url = new URL(location.href);
+      if (new URLSearchParams(url.hash.slice(1)).get('invite') === inviteToken) return;
+      if (!guardDraft()) {
+        url.hash = inviteToken === null ? '' : `invite=${encodeURIComponent(inviteToken)}`;
+        history.replaceState(null, '', url);
+        return;
+      }
+      // Pasting a link into an already-open tab is a fragment-only navigation.
+      // Reload to start onboarding with the same clean state as opening a new tab.
+      location.reload();
+    };
     const popstate = () => {
       if (!guardDraft()) { updateURL(); return; }
       const url = new URL(location.href);
@@ -710,10 +733,12 @@
     window.addEventListener('online', online);
     window.addEventListener('beforeunload', unload);
     window.addEventListener('popstate', popstate);
+    window.addEventListener('hashchange', hashchange);
     return () => {
       stopped = true; stopLive(); controller?.abort();
       window.removeEventListener('tiki:expired', expired); document.removeEventListener('visibilitychange', visibility);
       window.removeEventListener('online', online); window.removeEventListener('beforeunload', unload); window.removeEventListener('popstate', popstate);
+      window.removeEventListener('hashchange', hashchange);
     };
   });
 
@@ -742,7 +767,7 @@
       <div class="search-field" class:open={searchOpen || Boolean(query)}><Icon name="search" size={14} /><input aria-label="Search loaded items" placeholder="Filter loaded items…" bind:value={query} bind:this={searchInput} oninput={() => updateURL()} onblur={() => { if (!query) searchOpen = false; }} /><kbd>/</kbd><button class="icon-button search-close mobile-only" aria-label="Close search" onmousedown={event => event.preventDefault()} onclick={closeSearch}><Icon name="close" size={16} /></button></div>
       <div class="filters" class:open={filtersOpen} inert={mobile && !filtersOpen}>
         <div class="sheet-header mobile-only"><h2>Filters</h2><button class="text-button" onclick={() => filtersOpen = false}>Done</button></div>
-        <Select label="Filter assignee" title="Assignee" variant="filter" placeholder="Assignee" placeholderIcon="person" bind:value={filterAssignee} onchange={filterChanged} options={[{ value: '', label: 'Any assignee', icon: 'person' }, { value: 'none', label: 'Unassigned', icon: 'unassigned' }, ...users.map(u => ({ value: u.id, label: u.id === user?.id ? `${u.name} (me)` : u.name, avatar: initials(u.name) }))]} />
+        <Select label="Filter assignee" title="Assignee" variant="filter" placeholder="Assignee" placeholderIcon="person" bind:value={filterAssignee} onchange={filterChanged} options={[{ value: '', label: 'Any assignee', icon: 'person' }, { value: 'none', label: 'Unassigned', icon: 'unassigned' }, ...users.map(u => ({ value: u.id, label: u.removed_at ? `${u.name} (removed)` : u.id === user?.id ? `${u.name} (me)` : u.name, avatar: initials(u.name) }))]} />
         <Select label="Filter tag" title="Tag" variant="filter" placeholder="Tag" placeholderIcon="tag" bind:value={filterTag} onchange={filterChanged} options={[{ value: '', label: 'Any tag', icon: 'tag' }, ...tags.map(tag => ({ value: tag, label: tag, icon: 'hash' }))]} />
         <Select label="Filter status" title="Status" variant="filter" placeholder="Status" placeholderIcon="status" bind:value={filterStatus} onchange={filterChanged} options={[{ value: '', label: 'Any status', icon: 'status' }, ...statuses.map(status => ({ value: status, label: label(status), icon: status, iconClass: `status-icon ${status}` }))]} />
         {#if filterTag || filterAssignee || filterStatus || query}<button class="icon-button" aria-label="Clear filters" title="Clear filters" onclick={clearFilters}><Icon name="clear-filter" size={15} /><span class="mobile-only">Clear all</span></button>{/if}
@@ -753,7 +778,7 @@
       <button class="icon-button mobile-only" aria-label="Search" onclick={openSearch}><Icon name="search" size={18} /></button>
       <button class="icon-button mobile-only filter-toggle" aria-label="Filters" aria-expanded={filtersOpen} onclick={() => filtersOpen = !filtersOpen}><Icon name="filter" size={18} />{#if activeFilters}<span class="badge">{activeFilters}</span>{/if}</button>
       <button class="icon-button desktop-only" aria-label="Refresh board" title="Refresh (R)" disabled={busy} onclick={() => { error = ''; void refresh(true); }}><Icon name="refresh" size={15} /></button>
-      {#if user.role === 'admin'}<button class="icon-button" aria-label="Invite people" title="Invite people" onclick={() => inviting = true}><Icon name="add-person" size={17} /></button>{/if}
+      {#if user.role === 'admin'}<button class="icon-button" aria-label="Manage people" title="Manage people" onclick={() => inviting = true}><Icon name="add-person" size={17} /></button>{/if}
       <button class="icon-button" aria-label="Commands" title="Commands (Ctrl/Cmd+K)" onclick={() => showPalette()}><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"><Icon name="more" size={18} /></span></button>
       <button class="icon-button desktop-only" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={showHelp}><Icon name="keyboard" size={16} /></button>
     </div>
@@ -769,7 +794,7 @@
         <section class="kanban-column" class:drop-target={dragging && items.find(i => i.id === dragging)?.status !== status} aria-label={`${label(status)} column`} ondragover={event => { if (dragging && !readonly) event.preventDefault(); }} ondrop={event => { event.preventDefault(); if (dragging) void changeStatus(dragging, status); }}>
           <div class="column-header"><button id={`column-${status}`} class="column-focus" tabindex={activeColumn === status && !selected ? 0 : -1} onfocus={() => { activeColumn = status; selectedId = ''; }} onclick={() => focusColumn(status, 0)}><span class={`status-icon ${status}`}><Icon name={status} size={14} /></span><h2>{label(status)}</h2><span class="column-count" title="Loaded items">{columnItems.length}{cursors[status] ? '+' : ''}</span></button>{#if !readonly}<button class="icon-button column-add" aria-label={`Add item to ${label(status)}`} title="Add item (C)" onfocus={() => { activeColumn = status; selectedId = ''; }} onclick={() => create(status)}><Icon name="plus" size={15} /></button>{/if}</div>
           <div class="column-scroll">
-            {#if quickStatus === status}<form class="quick-create" onsubmit={event => quickCreate(event, (event.submitter as HTMLButtonElement)?.value === 'edit')}><textarea id="quick-title" aria-label="New item title" placeholder="Item title" rows="2" maxlength="300" required bind:value={quickTitle} disabled={creating} onkeydown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); const form = event.currentTarget.form; form?.requestSubmit(event.ctrlKey || event.metaKey ? form.querySelector<HTMLButtonElement>('[value=edit]')! : undefined); } }}></textarea><div><span class="hint"><kbd>↵</kbd> add <kbd>esc</kbd> cancel</span><button type="button" class="text-button mobile-only quick-cancel" onclick={() => { quickStatus = null; quickTitle = ''; }}>Cancel</button><button type="submit" value="edit" class="text-button" title="Add and edit (Ctrl/Cmd+Enter)" disabled={creating || !quickTitle.trim()}>Add & edit</button><button class="small-button" disabled={creating || !quickTitle.trim()}>{creating ? 'Adding…' : 'Add'}</button></div></form>{/if}
+            {#if quickStatus === status}<form class="quick-create" onsubmit={event => quickCreate(event, (event.submitter as HTMLButtonElement)?.value === 'edit')}><textarea id="quick-title" aria-label="New item title" placeholder="Item title" rows="2" maxlength="300" required bind:value={quickTitle} disabled={creating || readonly} onkeydown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); const form = event.currentTarget.form; form?.requestSubmit(event.ctrlKey || event.metaKey ? form.querySelector<HTMLButtonElement>('[value=edit]')! : undefined); } }}></textarea><div><span class="hint"><kbd>↵</kbd> add <kbd>esc</kbd> cancel</span><button type="button" class="text-button mobile-only quick-cancel" onclick={() => { quickStatus = null; quickTitle = ''; }}>Cancel</button><button type="submit" value="edit" class="text-button" title="Add and edit (Ctrl/Cmd+Enter)" disabled={creating || readonly || !quickTitle.trim()}>Add & edit</button><button class="small-button" disabled={creating || readonly || !quickTitle.trim()}>{creating ? 'Adding…' : 'Add'}</button></div></form>{/if}
             <ul class="cards" aria-label={`${label(status)} items`}>
               {#each columnItems as item (item.id)}
                 <li data-card={item.id} animate:flip={{ duration: duration(220) }} in:arrive><button id={`ticket-${item.id}`} data-ticket={item.id} tabindex={selectedId === item.id ? 0 : -1} class="card" class:drop-before={dropTarget === item.id && dropBefore} class:drop-after={dropTarget === item.id && !dropBefore} class:selected={selectedId === item.id} class:opened={openId === item.id} draggable={!readonly && !moving && !dirty && !coarse} ondragstart={event => { dragging = item.id; selectedId = item.id; event.dataTransfer?.setData('text/plain', item.id); }} ondragend={() => { dragging = ''; dropTarget = ''; }}
@@ -812,7 +837,7 @@
     </div>
   </dialog>
 {/if}
-{#if inviting && user?.role === 'admin' && !authExpired}<InviteDialog onclose={() => inviting = false} />{/if}
+{#if inviting && user?.role === 'admin' && !authExpired}<PeopleDialog {users} currentUserId={user.id} onchange={userChanged} onclose={() => inviting = false} />{/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>
   {#each [

@@ -35,7 +35,7 @@ make build
 
 Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend, and embeds it into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing `dist` output; use `make build` to ensure it is current.
 
-`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. Existing version-2 databases upgrade automatically to version 3 without losing accounts, sessions, or tickets; migration is transactional and unsupported schema versions are rejected.
+`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. New databases initialize transactionally from `internal/tiki/schema.sql`. During this pre-release stage, schema changes require a fresh database; older schema versions are rejected.
 
 In another terminal, sign in and start working:
 
@@ -61,7 +61,7 @@ Login with `--server URL` also saves that address. Selection order is `--server`
 
 ## Invite your team
 
-As an administrator, choose **Invite people** in the web toolbar or command menu, or run:
+As an administrator, open **Manage people** from the web toolbar or command menu, then choose **Invite people**, or run:
 
 ```sh
 ./tiki invite create                          # member access, valid for 7 days
@@ -75,6 +75,18 @@ Share the generated link privately. The recipient opens it, chooses a name, emai
 Use the browser-facing workspace address when configuring the CLI: the link uses that address. A loopback link works only on the same computer; team invitations need your reachable HTTPS address. Invite tokens are kept in the URL fragment, out of HTTP URL/access logs, and only their hashes are stored in SQLite. Lists never reveal tokens; create another invite if a link is lost. `invite create --json` returns `id`, `url`, `role`, and `expires_at` for scripts. Other ordinary command output never prints session credentials.
 
 After joining, teammates can run `tiki config set-server https://tiki.example.com` followed by `tiki auth login --email THEIR_EMAIL` to use the CLI with their chosen password.
+
+## Manage people
+
+The **People** dialog lists names, emails, and roles, with search, role controls, and removal. Admins can also use:
+
+```sh
+./tiki user list
+./tiki user role 2 --role viewer
+./tiki user remove 2
+```
+
+Role changes apply immediately to existing sessions and update open browsers. Removing a user signs them out and prevents further login or assignment; their identity, ticket history, and existing assignments remain available. **Show removed users** includes those identities in the People list. A new invite claimed with the same email restores access with a new password and the invite's role. Old sessions stay revoked. The last active administrator cannot be removed or demoted, including through concurrent requests. Demoting or removing an administrator also revokes their outstanding invitations.
 
 Administrators can provision additional users with an initial password:
 
@@ -132,7 +144,8 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | DELETE | `/api/v1/invites/{id}` | Admin: revoke an unused invite. |
 | POST | `/api/v1/auth/invite` | Public: inspect a link using `{ "token": "..." }`; returns role and expiry. |
 | POST | `/api/v1/auth/join` | Public: consume an invite with `token`, `name`, `email`, `password`; returns the same session shape as login. |
-| POST / GET | `/api/v1/users` | Create a user (name, email, password, optional role) / list users. |
+| POST / GET | `/api/v1/users` | Create a user (name, email, password, optional role) / list identities, including removed users with `removed_at` (Unix seconds). |
+| PATCH / DELETE | `/api/v1/users/{id}` | Admin: set `role` / remove access and revoke sessions, preserving history. |
 | GET | `/api/v1/board` | Initial board snapshot and paginated user/tag directories. |
 | POST / GET | `/api/v1/items` | Create / list items. |
 | GET / PATCH | `/api/v1/items/{id}` | Read / edit an item. |
@@ -175,7 +188,7 @@ make bench          # allocation and timing benchmarks at 10k and 100k items
 
 The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run with `npm --prefix frontend test`; see [frontend/README.md](frontend/README.md) for Chromium setup.
 
-Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, single-use and concurrent invite claims, version-2 migration, persistent CLI server settings, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
+Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, single-use and concurrent invite claims, role changes and removal, concurrent last-admin protection, persistent CLI server settings, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
 
 ```sh
 go test ./internal/tiki -run '^$' -fuzz FuzzID -fuzztime 10s -parallel 2
@@ -197,6 +210,6 @@ Keep business rules in the store and transport rules in the adapters. The store 
 
 SQLite uses WAL and `synchronous=FULL`. One connection serializes immediate write transactions, while a separate read-only pool has between two and eight connections, bounded by `GOMAXPROCS`. Every connection enables foreign keys and a five-second busy timeout. Item lists read ordering generation and rows in one deferred snapshot, so rebalancing cannot mix generations within a page. Reads do not acquire the writer lock. Mutations check versions and write activity inside the same transaction.
 
-The database schema is version 3. `Open` upgrades version 2 by adding the invites table in one transaction, preserving existing data. For a future schema change, add an explicit transactional migration in `Open`, increment `user_version`, and test opening a populated older database. Never recreate a populated database to upgrade it. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
+All tables, indexes, and triggers are defined in `internal/tiki/schema.sql` (currently schema version 4). There are no migrations or compatibility layers during this pre-release stage; use a fresh database when the schema changes. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
 
 The web UI receives committed ticket updates over SSE and merges them without polling or refetching each ticket. Comments, full-text search, bulk operations, and backup/export commands remain roadmap work. No parent ID or nesting is implemented.

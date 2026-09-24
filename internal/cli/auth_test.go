@@ -72,6 +72,15 @@ func TestEmailPasswordCLIFlow(t *testing.T) {
 		t.Fatal("list leaked token")
 	}
 	invoke(0, "", "invite", "revoke", invite.ID.String())
+	var teammate tiki.User
+	if err := json.Unmarshal([]byte(invoke(0, password+"\n", "user", "create", "--name", "Teammate", "--email", "team@example.test", "--password-stdin", "--json")), &teammate); err != nil {
+		t.Fatal(err)
+	}
+	invoke(0, "", "user", "role", teammate.ID.String(), "--role", "viewer")
+	invoke(0, "", "user", "remove", teammate.ID.String())
+	if !strings.Contains(out.String(), "removed_at") {
+		t.Fatal("CLI did not report removed access")
+	}
 	invoke(0, "", "item", "create", "--title", "Logged in", "--json")
 	var user tiki.User
 	if err = json.Unmarshal([]byte(invoke(0, "", "auth", "status", "--json")), &user); err != nil || user.Email != "admin@example.test" {

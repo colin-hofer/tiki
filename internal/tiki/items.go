@@ -63,12 +63,16 @@ func memberships(ctx context.Context, tx *sql.Tx, id ID, addUsers, removeUsers [
 		return invalid("at most 100 assignees per operation")
 	}
 	for _, userID := range append(slices.Clone(addUsers), removeUsers...) {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=?)", userID).Scan(&exists); err != nil {
+		var removed int64
+		err := tx.QueryRowContext(ctx, "SELECT removed_at FROM users WHERE id=?", userID).Scan(&removed)
+		if errors.Is(err, sql.ErrNoRows) {
+			return invalid("assignee does not exist: " + userID.String())
+		}
+		if err != nil {
 			return err
 		}
-		if !exists {
-			return invalid("assignee does not exist: " + userID.String())
+		if removed != 0 && slices.Contains(addUsers, userID) {
+			return invalid("assignee has been removed: " + userID.String())
 		}
 	}
 	for _, userID := range addUsers {

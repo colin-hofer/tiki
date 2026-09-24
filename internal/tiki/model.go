@@ -65,10 +65,11 @@ const (
 )
 
 type User struct {
-	ID    ID     `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email,omitempty"`
-	Role  string `json:"role"`
+	ID        ID     `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email,omitempty"`
+	Role      string `json:"role"`
+	RemovedAt int64  `json:"removed_at,omitempty"`
 }
 
 type UserPage struct {

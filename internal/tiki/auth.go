@@ -94,6 +94,15 @@ func normalizeAccount(user User, password string) (User, error) {
 }
 
 func insertAccount(ctx context.Context, tx *sql.Tx, user User, hash string) (User, error) {
+	// A new admin-issued invitation can restore a removed identity without
+	// losing attribution or reusing its old password or sessions.
+	err := tx.QueryRowContext(ctx, "UPDATE users SET name=?,role=?,password_hash=?,removed_at=0 WHERE email=? AND removed_at<>0 RETURNING id", user.Name, user.Role, hash, user.Email).Scan(&user.ID)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return User{}, err
+	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=?)", user.Email).Scan(&exists); err != nil {
 		return User{}, err
@@ -147,7 +156,7 @@ func (s *Store) Login(ctx context.Context, email, password string) (Session, err
 		return out, badCredentials
 	}
 	var encoded string
-	err := s.read.QueryRowContext(ctx, "SELECT id,name,email,role,password_hash FROM users WHERE email=?", strings.ToLower(strings.TrimSpace(email))).Scan(&out.User.ID, &out.User.Name, &out.User.Email, &out.User.Role, &encoded)
+	err := s.read.QueryRowContext(ctx, "SELECT id,name,email,role,password_hash FROM users WHERE email=? AND removed_at=0", strings.ToLower(strings.TrimSpace(email))).Scan(&out.User.ID, &out.User.Name, &out.User.Email, &out.User.Role, &encoded)
 	found := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, err
@@ -170,7 +179,10 @@ func (s *Store) Login(ctx context.Context, email, password string) (Session, err
 	err = s.transaction(ctx, func(tx *sql.Tx) error {
 		// A concurrent password change must not resurrect a session for the old password.
 		var current string
-		if err := tx.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id=?", out.User.ID).Scan(&current); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT password_hash,name,role FROM users WHERE id=? AND removed_at=0", out.User.ID).Scan(&current, &out.User.Name, &out.User.Role); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return badCredentials
+			}
 			return err
 		}
 		if current != encoded {
@@ -204,7 +216,7 @@ func (s *Store) Authenticate(ctx context.Context, token string) (User, error) {
 	if len(token) != 43 {
 		return user, &Error{Code: "unauthorized", Message: "session expired or invalid; sign in with auth login"}
 	}
-	err := s.read.QueryRowContext(ctx, "SELECT u.id,u.name,u.email,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.hash=? AND s.expires_at>?", hashSession(token), time.Now().Unix()).Scan(&user.ID, &user.Name, &user.Email, &user.Role)
+	err := s.read.QueryRowContext(ctx, "SELECT u.id,u.name,u.email,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.hash=? AND s.expires_at>? AND u.removed_at=0", hashSession(token), time.Now().Unix()).Scan(&user.ID, &user.Name, &user.Email, &user.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return user, &Error{Code: "unauthorized", Message: "session expired or invalid; sign in with auth login"}
 	}
@@ -264,7 +276,7 @@ func (s *Store) Users(ctx context.Context, after ID, limit int) (UserPage, error
 	if limit < 1 || limit > MaxPageSize {
 		return out, invalid("limit must be between 1 and 200")
 	}
-	rows, err := s.read.QueryContext(ctx, "SELECT id,name,email,role FROM users WHERE id>? ORDER BY id LIMIT ?", after, limit+1)
+	rows, err := s.read.QueryContext(ctx, "SELECT id,name,email,role,removed_at FROM users WHERE id>? ORDER BY id LIMIT ?", after, limit+1)
 	if err != nil {
 		return out, err
 	}
@@ -272,7 +284,7 @@ func (s *Store) Users(ctx context.Context, after ID, limit int) (UserPage, error
 
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &u.RemovedAt); err != nil {
 			return out, err
 		}
 		if len(out.Users) == limit {

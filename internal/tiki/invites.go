@@ -39,6 +39,15 @@ func (s *Store) CreateInvite(ctx context.Context, actor ID, role string, lifetim
 	now := time.Now()
 	invite := Invite{Role: role, CreatedBy: actor, CreatedAt: now.Unix(), ExpiresAt: now.Add(lifetime).Unix(), Token: randomToken()}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		// Recheck after acquiring the writer: a concurrent demotion/removal must
+		// not create a fresh link after revoking the administrator's old links.
+		var allowed bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND removed_at=0)", actor).Scan(&allowed); err != nil {
+			return err
+		}
+		if !allowed {
+			return &Error{Code: "forbidden", Message: "only active administrators can create invites"}
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM invites WHERE expires_at<=?", now.Unix()); err != nil {
 			return err
 		}

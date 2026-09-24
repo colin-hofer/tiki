@@ -3,7 +3,8 @@ CREATE TABLE users (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('admin','member','viewer'))
+    role TEXT NOT NULL CHECK(role IN ('admin','member','viewer')),
+    removed_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,4 +55,23 @@ CREATE TABLE activity (
 CREATE INDEX activity_item ON activity(item_id, id);
 CREATE TABLE ordering (id INTEGER PRIMARY KEY CHECK(id = 1), generation INTEGER NOT NULL);
 INSERT INTO ordering VALUES(1, 1);
-PRAGMA user_version = 2;
+
+CREATE TABLE invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'member', 'viewer')),
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE user_revision (id INTEGER PRIMARY KEY CHECK(id = 1), revision INTEGER NOT NULL);
+INSERT INTO user_revision VALUES(1, 0);
+CREATE TRIGGER users_insert_revision AFTER INSERT ON users BEGIN
+    UPDATE user_revision SET revision = revision + 1 WHERE id = 1;
+END;
+CREATE TRIGGER users_update_revision AFTER UPDATE OF name,email,role,removed_at ON users BEGIN
+    UPDATE user_revision SET revision = revision + 1 WHERE id = 1;
+END;
+
+PRAGMA user_version = 4;

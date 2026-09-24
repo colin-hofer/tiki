@@ -59,7 +59,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
     if (path === '/auth/login') return reply({ user: { ...user, role: state.viewer ? 'viewer' : 'member' }, session_token: 'test-only-session', expires_at: 9999999999 });
     if (path === '/auth/me') return reply({ ...user, role: state.viewer ? 'viewer' : 'member' });
     if (path === '/auth/logout') return reply({ logged_out: true });
-    if (path === '/users') return reply({ users: [user, { id: '2', name: 'Build Agent', role: 'member' }] });
+    if (path === '/users') return reply({ users: [{ ...user, role: state.viewer ? 'viewer' : 'member' }, { id: '2', name: 'Build Agent', role: 'member' }] });
     if (path === '/tags') return reply({ tags: ['api', 'frontend'] });
     if (path.endsWith('/activity')) return reply({ activity: [] });
     const list = (status: string | null, limit: number, cursor = '') => {
@@ -72,7 +72,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       const selected = url.searchParams.get('status');
       const columns = Object.fromEntries(statuses.filter(status => !selected || status === selected).map(status =>
         [status, list(status, !selected && ['backlog', 'complete', 'void'].includes(status) ? 20 : 100)]));
-      return reply({ columns, users: { users: [user, { id: '2', name: 'Build Agent', role: 'member' }] }, tags: { tags: ['api', 'frontend'] } });
+      return reply({ columns, users: { users: [{ ...user, role: state.viewer ? 'viewer' : 'member' }, { id: '2', name: 'Build Agent', role: 'member' }] }, tags: { tags: ['api', 'frontend'] } });
     }
     if (path === '/items' && request.method() === 'GET') {
       state.listCalls++;
@@ -111,6 +111,33 @@ async function signIn(page: import('@playwright/test').Page) {
   await expect(page.locator('.connection')).toHaveText('Live');
   await expect(page.locator('.connection')).toHaveAttribute('title', /Last sync/);
 }
+
+test('live role changes update permissions without losing an open draft', async ({ page, context }) => {
+  const state = await mock(context);
+  await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('Keep my draft');
+  state.viewer = true;
+  await state.notify('change', { users: true });
+  await expect(page.getByLabel('Ticket title', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
+  state.viewer = false;
+  await state.notify('change', { users: true });
+  await expect(page.getByLabel('Ticket title', { exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  expect(state.items.find(item => item.id === '2')?.title).toBe('Keep my draft');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('c');
+  await page.getByLabel('New item title').fill('Keep my new ticket draft');
+  state.viewer = true;
+  await state.notify('change', { users: true });
+  await expect(page.getByLabel('New item title')).toBeDisabled();
+  await expect(page.getByLabel('New item title')).toHaveValue('Keep my new ticket draft');
+});
 
 
 test('fullscreen board supports keyboard capture, navigation, moves, and editing', async ({ page, context }) => {

@@ -20,9 +20,6 @@ import (
 //go:embed schema.sql
 var schema string
 
-//go:embed invites.sql
-var inviteSchema string
-
 // Store owns a SQLite database. Reads use a bounded pool; writes are serialized
 // on one connection. Mutations and their activity records commit together.
 type Store struct {
@@ -66,20 +63,14 @@ func Open(path string) (*Store, error) {
 		if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 			return err
 		}
-		switch version {
-		case 0:
-			if _, err := tx.ExecContext(ctx, schema); err != nil {
-				return err
-			}
-			fallthrough
-		case 2:
-			_, err := tx.ExecContext(ctx, inviteSchema)
-			return err
-		case 3:
+		if version == 4 {
 			return nil
-		default:
-			return fmt.Errorf("unsupported database schema %d", version)
 		}
+		if version != 0 {
+			return fmt.Errorf("unsupported database schema %d; this build requires schema 4 (use a new database)", version)
+		}
+		_, err := tx.ExecContext(ctx, schema)
+		return err
 	})
 	if err != nil {
 		db.Close()
@@ -141,13 +132,14 @@ func (s *Store) notify() {
 }
 
 // Revision identifies the current item/activity and user-directory state.
-// Every item mutation appends activity in its transaction; users are append-only.
+// Every item mutation appends activity; user-directory writes increment a
+// durable revision so role changes and removals also reach live clients.
 type Revision struct{ Activity, Users ID }
 
 func (s *Store) Revision(ctx context.Context) (Revision, error) {
 	var revision Revision
 	err := s.read.QueryRowContext(ctx, `SELECT
 		(SELECT coalesce(max(id), 0) FROM activity),
-		(SELECT coalesce(max(id), 0) FROM users)`).Scan(&revision.Activity, &revision.Users)
+		(SELECT revision FROM user_revision WHERE id=1)`).Scan(&revision.Activity, &revision.Users)
 	return revision, err
 }

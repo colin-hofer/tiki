@@ -1,7 +1,7 @@
 export const statuses = ['backlog', 'todo', 'in_progress', 'code_review', 'blocked', 'complete', 'void'] as const;
 export type Status = typeof statuses[number];
 export type ItemType = 'task' | 'bug' | 'feature';
-export interface User { id: string; name: string; email?: string; role: string }
+export interface User { id: string; name: string; email?: string; role: string; removed_at?: number }
 export interface Item {
   id: string; title: string; description?: string; type: ItemType; status: Status;
   priority: number; version: number; assignees: string[]; tags: string[];

@@ -46,7 +46,36 @@ func (a *app) userCommand() *cobra.Command {
 		}
 		return a.print(out)
 	}
-	root.AddCommand(create, list)
+	var newRole string
+	changeRole := &cobra.Command{Use: "role ID --role ROLE", Short: "Change a user's role (admin)", Args: cobra.ExactArgs(1)}
+	changeRole.Flags().StringVar(&newRole, "role", "", "admin, member, or viewer (required)")
+	changeRole.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := tiki.ParseID(args[0])
+		if err != nil {
+			return err
+		}
+		if newRole == "" {
+			return &tiki.Error{Code: "validation", Message: "--role is required"}
+		}
+		var user tiki.User
+		if err := a.request(cmd.Context(), "PATCH", "/api/v1/users/"+id.String(), map[string]string{"role": newRole}, &user); err != nil {
+			return err
+		}
+		return a.print(user)
+	}
+	remove := &cobra.Command{Use: "remove ID", Short: "Revoke a user's access and sessions, preserving ticket history (admin)", Args: cobra.ExactArgs(1)}
+	remove.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := tiki.ParseID(args[0])
+		if err != nil {
+			return err
+		}
+		var user tiki.User
+		if err := a.request(cmd.Context(), "DELETE", "/api/v1/users/"+id.String(), nil, &user); err != nil {
+			return err
+		}
+		return a.print(user)
+	}
+	root.AddCommand(create, list, changeRole, remove)
 	return root
 }
 

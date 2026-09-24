@@ -131,6 +131,26 @@ func Handler(store *tiki.Store) http.Handler {
 		}
 		return store.Users(r.Context(), after, limit)
 	})
+	handle("PATCH /api/v1/users/{id}", "admin", func(r *http.Request, _ tiki.User) (any, error) {
+		id, err := tiki.ParseID(r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		var in struct {
+			Role string `json:"role"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return store.ChangeUserRole(r.Context(), id, in.Role)
+	})
+	handle("DELETE /api/v1/users/{id}", "admin", func(r *http.Request, _ tiki.User) (any, error) {
+		id, err := tiki.ParseID(r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		return store.RemoveUser(r.Context(), id)
+	})
 	handle("POST /api/v1/invites", "admin", func(r *http.Request, user tiki.User) (any, error) {
 		in := struct {
 			Role      string `json:"role"`
