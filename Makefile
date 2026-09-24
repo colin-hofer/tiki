@@ -1,17 +1,28 @@
-.PHONY: check fmt test vet build bench
+.DEFAULT_GOAL := build
+.PHONY: dev frontend check fmt test vet build bench
+
+dev: frontend/node_modules/.tiki-installed
+	npm --prefix frontend run dev
+
+frontend/node_modules/.tiki-installed: frontend/package.json frontend/package-lock.json
+	npm --prefix frontend ci --no-audit --no-fund
+	touch $@
+
+frontend: frontend/node_modules/.tiki-installed
+	npm --prefix frontend run build
 
 check: fmt test vet build
 
 fmt:
-	@test -z "$$(gofmt -l main.go internal)" || { gofmt -l main.go internal; exit 1; }
+	@test -z "$$(gofmt -l main.go internal frontend/*.go)" || { gofmt -l main.go internal frontend/*.go; exit 1; }
 
-test:
+test: frontend
 	go test -race ./...
 
-vet:
+vet: frontend
 	go vet ./...
 
-build:
+build: frontend
 	go build -o tiki .
 
 bench:

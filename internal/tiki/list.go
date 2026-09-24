@@ -18,6 +18,15 @@ type cursor struct {
 }
 
 func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
+	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Page{}, err
+	}
+	defer tx.Rollback()
+	return listItems(ctx, tx, f)
+}
+
+func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	out := Page{Items: []Item{}}
 	if f.Limit == 0 {
 		f.Limit = DefaultPageSize
@@ -54,11 +63,6 @@ func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 		}
 	}
 	out.Items = make([]Item, 0, f.Limit+1)
-	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return out, err
-	}
-	defer tx.Rollback()
 	var generation int64
 	if err := tx.QueryRowContext(ctx, "SELECT generation FROM ordering WHERE id=1").Scan(&generation); err != nil {
 		return out, err

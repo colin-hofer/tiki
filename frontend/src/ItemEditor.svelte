@@ -1,18 +1,22 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { untrack, tick } from 'svelte';
   import { api, APIError, statuses, label, initials } from './api';
   import type { Item, ItemType, Status, User, Activity, ActivityPage } from './api';
   import Icon from './Icon.svelte';
+  import Select from './Select.svelte';
+  import { slide } from 'svelte/transition';
+  import { duration } from './motion';
 
-  let { item = null, creating = false, users, tags, readonly = false, defaults = [], onclose, onsave, ondirty }:
-    { item?: Item | null; creating?: boolean; users: User[]; tags: string[]; readonly?: boolean; defaults?: string[];
-      onclose: () => void; onsave: (item: Item) => void; ondirty: (dirty: boolean) => void } = $props();
+  let { item, users, tags, readonly = false, currentUserId, suspended = false, canPrevious = false, canNext = false, onnavigate, onclose, onsave, ondirty }:
+    { item: Item; users: User[]; tags: string[]; readonly?: boolean; currentUserId: string; suspended?: boolean; canPrevious?: boolean; canNext?: boolean;
+      onnavigate: (direction: number) => void; onclose: () => void; onsave: (item: Item) => void | Promise<void>; ondirty: (dirty: boolean) => void } = $props();
+  let panel: HTMLElement;
   let base = $state<Item | null>(null);
   let title = $state('');
   let description = $state('');
   let status = $state<Status>('todo');
   let type = $state<ItemType>('task');
-  let itemTags = $state<string[]>(untrack(() => [...defaults]));
+  let itemTags = $state<string[]>([]);
   let assignees = $state<string[]>([]);
   let tagInput = $state('');
   let saving = $state(false);
@@ -22,15 +26,14 @@
   let activityOpen = $state(false);
   let activityBusy = $state(false);
   let activityError = $state('');
-  let titleInput: HTMLInputElement;
   const same = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x));
-  let dirty = $derived(base ? title !== base.title || description !== (base.description || '') || status !== base.status || type !== base.type || !same(itemTags, base.tags) || !same(assignees, base.assignees) : Boolean(title || description));
+  let dirty = $derived(Boolean(tagInput.trim()) || (base ? title !== base.title || description !== (base.description || '') || status !== base.status || type !== base.type || !same(itemTags, base.tags) || !same(assignees, base.assignees) : Boolean(title || description)));
   let conflict = $derived(Boolean(base && item && item.version > base.version && dirty));
   let canWrite = $derived(!readonly && !saving);
 
   function fill(value: Item) {
     base = value; title = value.title; description = value.description || ''; status = value.status;
-    type = value.type; itemTags = [...value.tags]; assignees = [...value.assignees]; error = '';
+    type = value.type; itemTags = [...value.tags]; assignees = [...value.assignees]; tagInput = ''; error = '';
   }
   $effect(() => {
     const incoming = item;
@@ -41,7 +44,6 @@
     const version = item?.version;
     if (activityOpen && version) untrack(() => { void loadActivity(); });
   });
-  onMount(() => { if (creating) titleInput?.focus(); });
 
   function patch(): Partial<Pick<Item, 'title' | 'description' | 'status' | 'type'>> & { add_tags?: string[]; remove_tags?: string[]; add_assignees?: string[]; remove_assignees?: string[] } {
     if (!base) return {};
@@ -59,6 +61,7 @@
 
   function rebase() {
     if (!item || !base) return;
+    if (tagInput.trim()) addTag();
     const changes = patch();
     const latest = item;
     fill(latest);
@@ -70,22 +73,27 @@
     assignees = [...new Set([...latest.assignees.filter(id => !changes.remove_assignees?.includes(id)), ...(changes.add_assignees || [])])];
   }
 
-  async function save(event?: SubmitEvent) {
+  async function save(event?: SubmitEvent, close = false) {
     event?.preventDefault();
-    if (!canWrite || !title.trim() || conflict || (!creating && !dirty)) return;
+    if (!canWrite || suspended || !base || !title.trim() || conflict) return;
+    if (!dirty) { if (close) onclose(); return; }
+    const focused = document.activeElement as HTMLElement;
+    let closed = false;
+    if (tagInput.trim()) addTag();
     saving = true; error = '';
     try {
-      const saved = creating
-        ? await api<Item>('/items', 'POST', { title, description, status, type, tags: itemTags, assignees })
-        : await api<Item>(`/items/${base!.id}`, 'PATCH', { version: base!.version, ...patch() });
-      fill(saved); ondirty(false); onsave(saved);
+      const saved = await api<Item>(`/items/${base.id}`, 'PATCH', { version: base.version, ...patch() });
+      fill(saved); ondirty(false); await onsave(saved);
+      if (close) { closed = true; onclose(); }
     } catch (e) {
       error = e instanceof APIError && e.code === 'conflict'
         ? 'This ticket changed on the server. Your draft is safe. Review the incoming changes before saving again.'
         : e instanceof Error ? e.message : 'Could not save. Your draft is safe.';
-      // Creates are deliberately not retried: the API has no idempotency keys yet.
-      if (creating && !(e instanceof APIError)) error += ' Check the list before creating again; the server may have received it.';
-    } finally { saving = false; }
+    } finally { saving = false; await tick(); if (!closed && focused?.isConnected && (document.activeElement === document.body || panel.contains(document.activeElement))) focused.focus(); }
+  }
+
+  export function assignSelf() {
+    if (canWrite && !suspended) assignees = assignees.includes(currentUserId) ? assignees.filter(id => id !== currentUserId) : [...assignees, currentUserId];
   }
 
   function addTag() {
@@ -105,22 +113,29 @@
   }
 
   function editorKey(event: KeyboardEvent) {
+    if (suspended || event.defaultPrevented || !panel?.contains(event.target as Node)) return;
+    if (event.key === 'Tab' && matchMedia('(max-width: 800px)').matches) {
+      const controls = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary')].filter(el => el.getClientRects().length);
+      const first = controls[0]; const last = controls.at(-1);
+      if (event.shiftKey && (event.target === first || event.target === panel)) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus(); }
+    }
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) {
-      event.preventDefault(); void save();
+      event.preventDefault(); if (panel.querySelector('form')?.reportValidity()) void save(undefined, event.shiftKey);
     }
   }
 </script>
 
 <svelte:window onkeydown={editorKey} />
 
-<aside class="detail" aria-label={creating ? 'New ticket' : `Ticket ${item?.id}`}>
+<aside class="detail" tabindex="-1" bind:this={panel} aria-label={`Item ${item.id}`}>
   <div class="detail-top">
-    <span class="item-id">{creating ? 'New item' : `#${item?.id}`}</span>
-    <button class="icon-button" aria-label="Close details" title="Close details (Escape)" onclick={onclose}><Icon name="close" size={17} /></button>
+    <span class="detail-id"><span class="item-id">TK-{item.id}</span></span>
+    <div class="button-row"><button class="icon-button" aria-label="Previous ticket" title="Previous ticket ([ / K)" disabled={!canPrevious || saving} onclick={() => onnavigate(-1)}><Icon name="up" size={15} /></button><button class="icon-button" aria-label="Next ticket" title="Next ticket (] / J)" disabled={!canNext || saving} onclick={() => onnavigate(1)}><Icon name="arrow-down" size={15} /></button><button class="icon-button detail-close" aria-label="Close details" title="Close details (Escape)" disabled={saving} onclick={onclose}><span class="desktop-only"><Icon name="close" size={16} /></span><span class="mobile-only"><Icon name="back" size={22} /></span></button></div>
   </div>
   <form class="editor-form" onsubmit={save}>
     <div class="detail-content">
-      <input class="title-editor" aria-label="Ticket title" placeholder="Title" maxlength="300" required bind:value={title} bind:this={titleInput} disabled={!canWrite} />
+      <input class="title-editor" aria-label="Ticket title" placeholder="Title" maxlength="300" required bind:value={title} disabled={!canWrite} />
 
       {#if conflict}
         <div class="conflict" role="status">
@@ -133,35 +148,35 @@
       {#if error}<div class="error-banner" role="alert">{error}</div>{/if}
 
       <div class="properties">
-        <label class="property"><span>Status</span><select aria-label="Ticket status" bind:value={status} disabled={!canWrite}>{#each statuses as value}<option value={value}>{label(value)}</option>{/each}</select></label>
-        <label class="property"><span>Type</span><select aria-label="Ticket type" bind:value={type} disabled={!canWrite}>{#each ['task', 'bug', 'feature'] as value}<option value={value}>{label(value)}</option>{/each}</select></label>
+        <div class="property"><span>Status</span><Select label="Ticket status" variant="property" bind:value={status} disabled={!canWrite} options={statuses.map(value => ({ value, label: label(value), icon: value, iconClass: `status-icon ${value}` }))} /></div>
+        <div class="property"><span>Type</span><Select label="Ticket type" variant="property" bind:value={type} disabled={!canWrite} options={(['task', 'bug', 'feature'] as const).map(value => ({ value, label: label(value), icon: value, iconClass: `item-type ${value}` }))} /></div>
         <div class="property"><span>Assignees</span><div class="property-values">
-          {#each assignees as id}<span class="person-chip"><span class="mini-avatar">{initials(users.find(u => u.id === id)?.name || id)}</span>{users.find(u => u.id === id)?.name || `User ${id}`}{#if !readonly}<button type="button" aria-label={`Remove assignee ${users.find(u => u.id === id)?.name || id}`} disabled={saving} onclick={() => assignees = assignees.filter(a => a !== id)}>×</button>{/if}</span>{/each}
-          {#if !readonly}<select aria-label="Add assignee" class="add-select" disabled={saving} onchange={event => { if (event.currentTarget.value) assignees = [...assignees, event.currentTarget.value]; event.currentTarget.value = ''; }}><option value="">+ Assign</option>{#each users.filter(u => !assignees.includes(u.id)) as u}<option value={u.id}>{u.name}</option>{/each}</select>{:else if !assignees.length}<span class="muted">Unassigned</span>{/if}
+          {#each assignees as id}<span class="person-chip"><span class="mini-avatar">{initials(users.find(u => u.id === id)?.name || id)}</span>{users.find(u => u.id === id)?.name || `User ${id}`}{#if !readonly}<button type="button" aria-label={`Remove assignee ${users.find(u => u.id === id)?.name || id}`} disabled={saving} onclick={() => assignees = assignees.filter(a => a !== id)}><Icon name="close" size={12} /></button>{/if}</span>{/each}
+          {#if !readonly}<Select label="Add assignee" variant="add" placeholder="Assign" placeholderIcon="add-person" value="" disabled={saving || users.every(u => assignees.includes(u.id))} onchange={id => { if (id) assignees = [...assignees, id]; }} options={users.filter(u => !assignees.includes(u.id)).map(u => ({ value: u.id, label: u.name, avatar: initials(u.name), hint: u.id === currentUserId ? 'me' : undefined }))} />{:else if !assignees.length}<span class="muted">Unassigned</span>{/if}
         </div></div>
         <div class="property"><span>Tags</span><div class="property-values">
-          {#each itemTags as tag}<span class="tag-chip">{tag}{#if !readonly}<button type="button" aria-label={`Remove tag ${tag}`} disabled={saving} onclick={() => itemTags = itemTags.filter(t => t !== tag)}>×</button>{/if}</span>{/each}
-          {#if !readonly}<div class="tag-entry"><input aria-label="Add tag" placeholder="+ Add tag" list="known-tags" maxlength="64" bind:value={tagInput} disabled={saving} onkeydown={event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); addTag(); } }} /><button type="button" class="icon-button" aria-label="Apply tag" disabled={!tagInput.trim() || saving} onclick={addTag}><Icon name="plus" size={13} /></button></div><datalist id="known-tags">{#each tags as tag}<option value={tag}></option>{/each}</datalist>{:else if !itemTags.length}<span class="muted">No tags</span>{/if}
+          {#each itemTags as tag}<span class="tag-chip">{tag}{#if !readonly}<button type="button" aria-label={`Remove tag ${tag}`} disabled={saving} onclick={() => itemTags = itemTags.filter(t => t !== tag)}><Icon name="close" size={12} /></button>{/if}</span>{/each}
+          {#if !readonly}<div class="tag-entry"><input aria-label="Add tag" placeholder="+ Add tag" list="known-tags" maxlength="64" bind:value={tagInput} disabled={saving} onkeydown={event => { if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.isComposing) { event.preventDefault(); addTag(); } }} /><button type="button" class="icon-button" aria-label="Apply tag" disabled={!tagInput.trim() || saving} onclick={addTag}><Icon name="plus" size={13} /></button></div><datalist id="known-tags">{#each tags as tag}<option value={tag}></option>{/each}</datalist>{:else if !itemTags.length}<span class="muted">No tags</span>{/if}
         </div></div>
       </div>
       <div class="section-label"><label for="description">Description</label></div>
       <textarea id="description" class="description-editor" placeholder="Description (Markdown)" bind:value={description} disabled={!canWrite} spellcheck="false"></textarea>
       {#if base}
         <div class="activity-section">
-          <button type="button" class="activity-toggle" aria-expanded={activityOpen} onclick={() => activityOpen = !activityOpen}><Icon name={activityOpen ? 'down' : 'arrow'} size={14} /> Activity</button>
-          {#if activityOpen}
+          <button type="button" class="activity-toggle" aria-expanded={activityOpen} onclick={() => activityOpen = !activityOpen}><Icon name={activityOpen ? 'down' : 'arrow'} size={14} />Activity</button>
+          {#if activityOpen}<div transition:slide={{ duration: duration(180) }}>
             {#if activityError}<p class="error-banner" role="alert">{activityError}</p>{/if}
-            <ol class="activity-list">{#each activity as event (event.id)}<li><span class="activity-node"></span><div><strong>{users.find(u => u.id === event.actor_id)?.name || `User ${event.actor_id}`}</strong> <span class="muted">{event.kind.replaceAll('_', ' ').replaceAll('.', ' ')}</span><time datetime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div></li>{/each}</ol>
+            <ol class="activity-list">{#each activity as event (event.id)}<li><span class="activity-node" aria-hidden="true"></span><div><strong>{users.find(u => u.id === event.actor_id)?.name || `User ${event.actor_id}`}</strong> <span class="muted">{event.kind.replaceAll('_', ' ').replaceAll('.', ' ')}</span><time datetime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time></div></li>{/each}</ol>
             {#if activityCursor}<button type="button" class="text-button" disabled={activityBusy} onclick={() => loadActivity(true)}>Load more activity</button>{/if}
             {#if activityBusy}<p class="muted">Loading activity…</p>{/if}
-          {/if}
+          </div>{/if}
         </div>
         <div class="detail-meta">Created {new Date(base.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}<span>TK-{base.id}</span></div>
       {/if}
     </div>
     <div class="editor-footer">
-      <span class:unsaved={dirty} class="save-state"><span class="tiny-dot"></span>{saving ? 'Saving…' : readonly ? 'Read-only access' : dirty ? 'Unsaved changes' : creating ? 'New item' : 'Saved'}</span>
-      {#if !readonly}<div class="button-row">{#if dirty && base}<button type="button" class="text-button" disabled={saving} onclick={() => fill(item || base!)}>Discard</button>{/if}<button class="primary-button" type="submit" disabled={saving || conflict || !title.trim() || (!creating && !dirty)}>{creating ? 'Create ticket' : 'Save'}<kbd>⌘ ↵</kbd></button></div>{/if}
+      <span class:unsaved={dirty} class="save-state"><span class="tiny-dot" aria-hidden="true"></span>{saving ? 'Saving…' : readonly ? 'Read-only access' : dirty ? 'Unsaved changes' : 'Saved'}</span>
+      {#if !readonly}<div class="button-row">{#if dirty && base}<button type="button" class="text-button" disabled={saving} onclick={() => fill(item || base!)}>Discard</button>{/if}<button class="primary-button" type="submit" disabled={saving || conflict || !title.trim() || !dirty}>Save<kbd aria-hidden="true">⌘↵</kbd></button></div>{/if}
     </div>
   </form>
 </aside>

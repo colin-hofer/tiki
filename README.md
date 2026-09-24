@@ -2,15 +2,38 @@
 
 A Go CLI and shared HTTP server for tracking work. Items have a sortable `float64` priority, multiple assignees, and generic tags. The architecture and roadmap are in [PLAN.md](PLAN.md).
 
-## Run
+## Local development
 
-Requires the Go version declared in `go.mod`. SQLite is embedded. Build the binary, initialize a fresh database, and start the server:
+Install Go (the version in `go.mod`), Node.js 22.12+ with npm, and Make. From the repository root, run:
 
 ```sh
-go build -o tiki .
-./tiki init --db ./dev.db --name Colin --email colin@example.com
-./tiki serve --db ./dev.db
+make dev
 ```
+
+Open **http://127.0.0.1:5173**. The first run installs the locked frontend dependencies, builds the Go API, and asks you to choose a password for **dev@tiki.local**. Sign in with that account. Later runs reuse the database and account without prompting.
+
+Frontend edits hot-reload. Go and SQL edits rebuild and restart the API automatically; a compilation error leaves the previous API running until you fix it. Ctrl+C stops both servers. Development data persists in `.dev/tiki.db`, separate from the default `tiki.db`; nothing resets your database on startup. The dev API listens only on `127.0.0.1:8081`.
+
+Optional overrides:
+
+```sh
+TIKI_DEV_API_PORT=18081 make dev
+TIKI_DEV_DB=/absolute/path/to/dev.db make dev
+TIKI_API_URL=http://127.0.0.1:8080 make dev  # use an already-running API
+```
+
+To use the CLI against the development server, run `.dev/tiki-api auth login --server http://127.0.0.1:8081 --email dev@tiki.local`. A saved CLI login remembers that address.
+
+## Build and run the complete app
+
+```sh
+make build
+# For a fresh database, create your first administrator once:
+./tiki init --db ./tiki.db --name Colin --email colin@example.com
+./tiki serve --db ./tiki.db
+```
+
+Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend, and embeds it into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing `dist` output; use `make build` to ensure it is current.
 
 `init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. Existing version-2 databases remain compatible; initialization is transactional and unsupported schema versions are rejected.
 
@@ -23,7 +46,7 @@ In another terminal, sign in and start working:
 ./tiki item list
 ```
 
-Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
+Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source after `make frontend`, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
 
 The default server is `http://127.0.0.1:8080`. Login to another server with `--server https://tiki.example.com`; subsequent commands remember that address. Explicit `--server` or `TIKI_SERVER` takes precedence over the saved address. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
 
@@ -80,6 +103,7 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | POST | `/api/v1/auth/logout` | Revoke the current session. |
 | POST | `/api/v1/auth/password` | Change password using `current_password` and `new_password`; revoke all user sessions. |
 | POST / GET | `/api/v1/users` | Create a user (name, email, password, optional role) / list users. |
+| GET | `/api/v1/board` | Initial board snapshot and paginated user/tag directories. |
 | POST / GET | `/api/v1/items` | Create / list items. |
 | GET / PATCH | `/api/v1/items/{id}` | Read / edit an item. |
 | POST | `/api/v1/items/{id}/move` | Move before/after another item. |
@@ -102,6 +126,12 @@ Edit and move bodies:
 {"version":2,"before":"42"}
 ```
 
+`GET /api/v1/board` accepts the same `tag`, `status`, and `assignee` filters as the item list. Its `columns` object maps statuses to item pages from one SQLite read snapshot. Active statuses return up to 100 summaries each; backlog, complete, and void return up to 20 each. An explicit status filter returns up to 100 regardless of status. Summaries omit descriptions. Continue each column through `/items` using that column's `next_cursor` and the same filters. The board endpoint rejects `limit` and `cursor`; it also includes `users` and `tags` page objects (up to 200 entries each), whose `next_after` continues through the corresponding directory endpoint. This reduces a normal web session restore to three API requests: session, event stream, and board.
+
+`GET /api/v1/events` is an authenticated SSE stream using the same bearer token as other endpoints. `ready` asks for an initial snapshot; `change` carries JSON `{ "items": [/* current tickets */], "users": true, "reset": true }` with unused fields omitted. Merge items by ID only when their version is newer. `users` invalidates the user directory, and `reset` requests a fresh snapshot. Subscribe before reading the snapshot to avoid missing concurrent edits. Every reconnect starts with `ready`; the stream does not require replay cursors. `expired` closes a revoked/expired session.
+
+The stream caps concurrent connections at 256, limits each catch-up batch to 64 activity records and approximately 2 MiB of ticket JSON, and sends `reset` if those bounds or a global ordering reset require a new snapshot. Slow writes disconnect after five seconds. Heartbeats every 15 seconds also recheck credentials and catch changes made through another database connection/process. At a reverse proxy, disable response buffering and allow an idle timeout above 15 seconds (`X-Accel-Buffering: no` is already sent). Browser connections use header authentication through streaming fetch, keeping tokens out of URLs.
+
 The item list accepts `tag`, `status`, `assignee` (ID or `none`), `limit`, and `cursor` query parameters. Repeat `tag` to require multiple tags. Users and activity accept an ID in `after`; tags accept a name. Each accepts `limit` up to 200. Activity pages also cap stored event payloads at approximately 2 MiB, so use `next_after` rather than assuming a full page. Successful operations return HTTP 200. Send `Content-Type: application/json` for JSON bodies; other explicit media types return 415. Bodies are limited to 2 MiB (413 on overflow). Unknown API routes return JSON 404 errors; unsupported methods return JSON 405 errors with an `Allow` header. Request deadlines return 504. `/healthz` reports process liveness; `/readyz` checks database connectivity and returns 503 when unavailable.
 
 CLI exit codes: 0 success, 1 unexpected failure, 2 validation/flag errors, 3 not found, 4 conflict/expired cursor, 5 authentication/authorization, 6 transport failure, timeout, unavailable service, or rate limit.
@@ -109,11 +139,11 @@ CLI exit codes: 0 success, 1 unexpected failure, 2 validation/flag errors, 3 not
 ## Development
 
 ```sh
-make check          # formatting, race tests, vet, binary build
+make check          # formatting, frontend checks/build, race tests, vet, bundled binary
 make bench          # allocation and timing benchmarks at 10k and 100k items
 ```
 
-The same checks run on pushes and pull requests through GitHub Actions. No extra Go tooling is required. Without Make, run `go test -race ./...`, `go vet ./...`, and `go build .`; use `gofmt -l main.go internal` to check formatting. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`.
+The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run with `npm --prefix frontend test`; see [frontend/README.md](frontend/README.md) for Chromium setup.
 
 Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
 
@@ -128,14 +158,15 @@ Measured results and reproduction details are in [docs/performance.md](docs/perf
 | Package | Responsibility |
 | --- | --- |
 | `internal/tiki` | Domain types and limits, input validation, accounts/sessions, explicit SQL, ordering, pagination, and transactional activity. No HTTP or CLI dependencies. |
-| `internal/httpapi` | Versioned routes, authentication and role checks, request limits, JSON errors, and health/readiness probes. |
+| `internal/httpapi` | UI/API routing, authentication and role checks, request limits, JSON errors, and health/readiness probes. |
+| `frontend` | Svelte/TypeScript UI, Vite development integration, and the Go handler for embedded assets. |
 | `internal/cli` | Cobra commands, server startup/shutdown, HTTP requests, saved credentials, and terminal/JSON output. |
 | `main.go` | Process entry point. |
 
-Keep business rules in the store and transport rules in the adapters. The store is a trusted in-process API: HTTP authorization belongs in `httpapi`, and all remote clients, including the future web UI, must use that boundary. Concrete types and ordinary functions are sufficient; there is no repository interface, ORM, dependency injection container, or generated layer.
+Keep business rules in the store and transport rules in the adapters. The store is a trusted in-process API: HTTP authorization belongs in `httpapi`, and all remote clients, including the web UI, must use that boundary. Concrete types and ordinary functions are sufficient; there is no repository interface, ORM, dependency injection container, or generated layer.
 
 SQLite uses WAL and `synchronous=FULL`. One connection serializes immediate write transactions, while a separate read-only pool has between two and eight connections, bounded by `GOMAXPROCS`. Every connection enables foreign keys and a five-second busy timeout. Item lists read ordering generation and rows in one deferred snapshot, so rebalancing cannot mix generations within a page. Reads do not acquire the writer lock. Mutations check versions and write activity inside the same transaction.
 
 The database schema remains version 2. For a future schema change, add an explicit transactional migration in `Open`, increment `user_version`, and test opening a populated older database. Never recreate a populated database to upgrade it. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
 
-Comments, full-text search, SSE, bulk operations, backup/export commands, and the web UI remain roadmap work. No parent ID or nesting is implemented.
+The web UI receives committed ticket updates over SSE and merges them without polling or refetching each ticket. Comments, full-text search, bulk operations, and backup/export commands remain roadmap work. No parent ID or nesting is implemented.

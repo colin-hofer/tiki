@@ -36,9 +36,14 @@ func TestEmailPasswordCLIFlow(t *testing.T) {
 		}
 		return out.String()
 	}
-	invoke(0, password+"\n", "init", "--db", db, "--name", "Admin", "--email", "Admin@Example.test", "--password-stdin", "--json")
+	invoke(0, password+"\n", "init", "--if-needed", "--db", db, "--name", "Admin", "--email", "Admin@Example.test", "--password-stdin", "--json")
 	if strings.Contains(out.String(), "session_token") || strings.Contains(out.String(), "password_hash") {
 		t.Fatal("init exposed credentials")
+	}
+	// Repeated setup neither prompts nor replaces existing accounts/passwords.
+	var existing tiki.User
+	if err := json.Unmarshal([]byte(invoke(0, "", "init", "--if-needed", "--db", db, "--name", "Replacement", "--email", "other@example.test", "--json")), &existing); err != nil || existing.Email != "admin@example.test" {
+		t.Fatalf("init changed the account or required a password: %+v, %v", existing, err)
 	}
 	store, err := tiki.Open(db)
 	if err != nil {

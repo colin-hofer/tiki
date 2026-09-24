@@ -14,15 +14,20 @@ import (
 	"sync"
 	"time"
 
+	"tiki/frontend"
 	"tiki/internal/tiki"
 )
 
-// Handler serves the versioned JSON API. Authorization belongs at this boundary;
+// Handler serves the web UI and versioned JSON API. Authorization belongs at this boundary;
 // Store is a trusted in-process API and must not be exposed directly to clients.
 func Handler(store *tiki.Store) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/", frontend.Handler())
 	methods := make(map[string][]string)
 	attempts := &loginLimiter{windows: make(map[string]loginWindow)}
+	// Streams have their own write deadlines and do not use the JSON timeout.
+	mux.Handle("GET /api/v1/events", &eventStream{store: store, slots: make(chan struct{}, 256), heartbeat: 15 * time.Second})
+	methods["/api/v1/events"] = []string{http.MethodGet}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -134,24 +139,36 @@ func Handler(store *tiki.Store) http.Handler {
 		return store.Create(r.Context(), u.ID, in)
 	})
 	handle("GET /api/v1/items", "read", func(r *http.Request, _ tiki.User) (any, error) {
-		q := r.URL.Query()
-		f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Cursor: q.Get("cursor")}
-		var err error
-		if q.Has("limit") {
-			f.Limit, err = strconv.Atoi(q.Get("limit"))
-			if err != nil || f.Limit <= 0 {
-				return nil, invalid("limit must be between 1 and 200")
-			}
-		}
-		if q.Get("assignee") == "none" {
-			f.Unassigned = true
-		} else if q.Has("assignee") {
-			f.Assignee, err = tiki.ParseID(q.Get("assignee"))
-			if err != nil {
-				return nil, err
-			}
+		f, err := itemFilter(r)
+		if err != nil {
+			return nil, err
 		}
 		return store.List(r.Context(), f)
+	})
+	handle("GET /api/v1/board", "read", func(r *http.Request, _ tiki.User) (any, error) {
+		f, err := itemFilter(r)
+		if err != nil {
+			return nil, err
+		}
+		columns, err := store.Board(r.Context(), f)
+		if err != nil {
+			return nil, err
+		}
+		// Read directories after the item snapshot, so newly assigned users/tags
+		// are present. Oversized directories retain their usual page cursors.
+		users, err := store.Users(r.Context(), 0, tiki.MaxPageSize)
+		if err != nil {
+			return nil, err
+		}
+		tags, err := store.Tags(r.Context(), "", tiki.MaxPageSize)
+		if err != nil {
+			return nil, err
+		}
+		return struct {
+			Columns map[tiki.Status]tiki.Page `json:"columns"`
+			Users   tiki.UserPage             `json:"users"`
+			Tags    tiki.TagPage              `json:"tags"`
+		}{columns, users, tags}, nil
 	})
 	handle("GET /api/v1/items/{id}", "read", func(r *http.Request, _ tiki.User) (any, error) {
 		id, err := tiki.ParseID(r.PathValue("id"))
@@ -218,6 +235,27 @@ func Handler(store *tiki.Store) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func itemFilter(r *http.Request) (tiki.Filter, error) {
+	q := r.URL.Query()
+	f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Cursor: q.Get("cursor")}
+	var err error
+	if q.Has("limit") {
+		f.Limit, err = strconv.Atoi(q.Get("limit"))
+		if err != nil || f.Limit <= 0 {
+			return tiki.Filter{}, invalid("limit must be between 1 and 200")
+		}
+	}
+	if q.Get("assignee") == "none" {
+		f.Unassigned = true
+	} else if q.Has("assignee") {
+		f.Assignee, err = tiki.ParseID(q.Get("assignee"))
+		if err != nil {
+			return tiki.Filter{}, err
+		}
+	}
+	return f, nil
 }
 
 func pagination(r *http.Request) (tiki.ID, int, error) {

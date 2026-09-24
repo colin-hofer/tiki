@@ -189,6 +189,9 @@ func (s *Store) Authenticate(ctx context.Context, token string) (User, error) {
 
 func (s *Store) Logout(ctx context.Context, token string) error {
 	_, err := s.write.ExecContext(ctx, "DELETE FROM sessions WHERE hash=?", hashSession(token))
+	if err == nil {
+		s.notify()
+	}
 	return err
 }
 

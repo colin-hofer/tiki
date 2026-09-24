@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -25,6 +26,8 @@ type Store struct {
 	write         *sql.DB
 	read          *sql.DB
 	passwordSlots chan struct{}
+	changeMu      sync.Mutex
+	changed       chan struct{}
 }
 
 func Open(path string) (*Store, error) {
@@ -52,7 +55,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	s := &Store{write: db, passwordSlots: make(chan struct{}, 2)}
+	s := &Store{write: db, passwordSlots: make(chan struct{}, 2), changed: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = s.transaction(ctx, func(tx *sql.Tx) error {
@@ -105,5 +108,37 @@ func (s *Store) transaction(ctx context.Context, fn func(*sql.Tx) error) error {
 	if err = fn(tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.notify()
+	return nil
+}
+
+// Changes closes after a successful write. Subscribe before reading Revision so
+// a commit between the read and the wait cannot be missed. Wakeups coalesce and
+// never wait for consumers; Revision remains the durable source of truth.
+func (s *Store) Changes() <-chan struct{} {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	return s.changed
+}
+
+func (s *Store) notify() {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	close(s.changed)
+	s.changed = make(chan struct{})
+}
+
+// Revision identifies the current item/activity and user-directory state.
+// Every item mutation appends activity in its transaction; users are append-only.
+type Revision struct{ Activity, Users ID }
+
+func (s *Store) Revision(ctx context.Context) (Revision, error) {
+	var revision Revision
+	err := s.read.QueryRowContext(ctx, `SELECT
+		(SELECT coalesce(max(id), 0) FROM activity),
+		(SELECT coalesce(max(id), 0) FROM users)`).Scan(&revision.Activity, &revision.Users)
+	return revision, err
 }
