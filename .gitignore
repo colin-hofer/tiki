@@ -1,0 +1,4 @@
+/tiki
+*.db
+*.db-wal
+*.db-shm

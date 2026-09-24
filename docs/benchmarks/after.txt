@@ -1,0 +1,51 @@
+goos: linux
+goarch: amd64
+pkg: tiki/internal/tiki
+cpu: AMD Ryzen 9 7950X 16-Core Processor            
+BenchmarkRead/10000/Get-32   	    6270	     34327 ns/op	    2727 B/op	      75 allocs/op
+BenchmarkRead/10000/Get-32   	    6760	     34579 ns/op	    2692 B/op	      75 allocs/op
+BenchmarkRead/10000/Get-32   	    6286	     33069 ns/op	    2689 B/op	      75 allocs/op
+BenchmarkRead/10000/List-32  	    1082	    218652 ns/op	   48033 B/op	    1318 allocs/op
+BenchmarkRead/10000/List-32  	    1110	    216541 ns/op	   48036 B/op	    1318 allocs/op
+BenchmarkRead/10000/List-32  	    1036	    224350 ns/op	   48031 B/op	    1318 allocs/op
+BenchmarkRead/10000/Status-32         	    1059	    235664 ns/op	   48088 B/op	    1322 allocs/op
+BenchmarkRead/10000/Status-32         	    1042	    232784 ns/op	   48122 B/op	    1322 allocs/op
+BenchmarkRead/10000/Status-32         	    1066	    240390 ns/op	   48104 B/op	    1322 allocs/op
+BenchmarkRead/10000/RareTag-32        	     166	   1494493 ns/op	   52544 B/op	    1526 allocs/op
+BenchmarkRead/10000/RareTag-32        	     166	   1433377 ns/op	   52605 B/op	    1526 allocs/op
+BenchmarkRead/10000/RareTag-32        	     166	   1435528 ns/op	   52545 B/op	    1526 allocs/op
+BenchmarkRead/10000/TagsAndStatus-32  	     132	   1802007 ns/op	   39360 B/op	    1022 allocs/op
+BenchmarkRead/10000/TagsAndStatus-32  	     133	   1791316 ns/op	   39282 B/op	    1022 allocs/op
+BenchmarkRead/10000/TagsAndStatus-32  	     132	   1802770 ns/op	   39369 B/op	    1022 allocs/op
+BenchmarkRead/10000/Assignee-32       	     278	    850067 ns/op	   52504 B/op	    1523 allocs/op
+BenchmarkRead/10000/Assignee-32       	     282	    844809 ns/op	   52362 B/op	    1523 allocs/op
+BenchmarkRead/10000/Assignee-32       	     282	    847504 ns/op	   52461 B/op	    1523 allocs/op
+BenchmarkRead/10000/ParallelList-32   	    2480	    103613 ns/op	   50843 B/op	    1313 allocs/op
+BenchmarkRead/10000/ParallelList-32   	    2280	     94787 ns/op	   51157 B/op	    1313 allocs/op
+BenchmarkRead/10000/ParallelList-32   	    2396	     96265 ns/op	   50931 B/op	    1313 allocs/op
+BenchmarkRead/100000/Get-32           	    6307	     35920 ns/op	    2696 B/op	      75 allocs/op
+BenchmarkRead/100000/Get-32           	    7212	     35882 ns/op	    2691 B/op	      75 allocs/op
+BenchmarkRead/100000/Get-32           	    6590	     34266 ns/op	    2691 B/op	      75 allocs/op
+BenchmarkRead/100000/List-32          	    1040	    236551 ns/op	   48033 B/op	    1318 allocs/op
+BenchmarkRead/100000/List-32          	     967	    231757 ns/op	   48070 B/op	    1318 allocs/op
+BenchmarkRead/100000/List-32          	    1044	    234524 ns/op	   48086 B/op	    1318 allocs/op
+BenchmarkRead/100000/Status-32        	     874	    248669 ns/op	   48148 B/op	    1322 allocs/op
+BenchmarkRead/100000/Status-32        	     986	    257402 ns/op	   48169 B/op	    1322 allocs/op
+BenchmarkRead/100000/Status-32        	     932	    258028 ns/op	   48184 B/op	    1322 allocs/op
+BenchmarkRead/100000/RareTag-32       	     141	   1685298 ns/op	   52758 B/op	    1526 allocs/op
+BenchmarkRead/100000/RareTag-32       	     140	   1690890 ns/op	   52652 B/op	    1526 allocs/op
+BenchmarkRead/100000/RareTag-32       	     138	   1718041 ns/op	   52692 B/op	    1526 allocs/op
+BenchmarkRead/100000/TagsAndStatus-32 	      75	   3161332 ns/op	   53143 B/op	    1533 allocs/op
+BenchmarkRead/100000/TagsAndStatus-32 	      72	   3126794 ns/op	   53203 B/op	    1533 allocs/op
+BenchmarkRead/100000/TagsAndStatus-32 	      74	   3132625 ns/op	   53065 B/op	    1533 allocs/op
+BenchmarkRead/100000/Assignee-32      	     218	   1089824 ns/op	   52442 B/op	    1523 allocs/op
+BenchmarkRead/100000/Assignee-32      	     220	   1086849 ns/op	   52412 B/op	    1523 allocs/op
+BenchmarkRead/100000/Assignee-32      	     217	   1092600 ns/op	   52412 B/op	    1523 allocs/op
+BenchmarkRead/100000/ParallelList-32  	    2034	    109492 ns/op	   50738 B/op	    1312 allocs/op
+BenchmarkRead/100000/ParallelList-32  	    2370	    113452 ns/op	   50806 B/op	    1313 allocs/op
+BenchmarkRead/100000/ParallelList-32  	    1867	    108825 ns/op	   50875 B/op	    1313 allocs/op
+BenchmarkCreateAndMove-32             	     843	    307220 ns/op	   14149 B/op	     389 allocs/op
+BenchmarkCreateAndMove-32             	     750	    315077 ns/op	   14135 B/op	     388 allocs/op
+BenchmarkCreateAndMove-32             	     824	    295336 ns/op	   14135 B/op	     389 allocs/op
+PASS
+ok  	tiki/internal/tiki	11.940s
