@@ -76,11 +76,12 @@ export function devAPI(port: number): Plugin {
         child.once('exit', code => failed(`API exited (${code}); stopping development servers.`));
       }
 
-      work = restart(true);
+      // Direct npm run dev gets the same installer downloads as make dev.
+      work = run('sh', ['scripts/build-cli.sh'], root).then(() => restart(true));
       try { await work; } catch (err) { onExit(); throw err; }
       server.watcher.add(root);
       server.watcher.on('all', (event, file) => {
-        if (closing || !['add', 'change', 'unlink'].includes(event) || !/(?:\.(?:go|sql)|[/\\]go\.(?:mod|sum))$/.test(file)) return;
+        if (closing || !['add', 'change', 'unlink'].includes(event) || !/(?:\.(?:go|sql|sh)|[/\\]go\.(?:mod|sum))$/.test(file)) return;
         clearTimeout(timer);
         timer = setTimeout(() => {
           work = work.then(() => restart()).catch(err => {

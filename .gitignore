@@ -1,5 +1,6 @@
 /tiki
 /.dev/
+/internal/httpapi/dist/
 *.db
 *.db-wal
 *.db-shm

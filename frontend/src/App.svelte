@@ -8,6 +8,7 @@
   import Select from './Select.svelte';
   import Join from './Join.svelte';
   import PeopleDialog from './PeopleDialog.svelte';
+  import InstallCLI from './InstallCLI.svelte';
   import { flip } from 'svelte/animate';
   import { arrive, capture, duration, panel, sheet } from './motion';
 
@@ -15,6 +16,7 @@
   const initialInvite = new URLSearchParams(initialURL.hash.slice(1)).get('invite');
   let inviteToken = $state(initialInvite);
   let inviting = $state(false);
+  let installing = $state(false);
   let user = $state<User | null>(null);
   let authExpired = $state(false);
   let checking = $state(initialInvite === null && hasSession());
@@ -188,6 +190,7 @@
     ...columns.map((status, index) => ({ id: `column-${status}`, label: `Go to ${label(status)} column`, hint: String(index + 1), run: () => focusColumn(status, preferredRow) })),
     { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: showHelp },
     ...(user?.role === 'admin' ? [{ id: 'people', label: 'Manage people', run: () => inviting = true }] : []),
+    { id: 'install', label: 'Install CLI', run: () => installing = true },
     { id: 'logout', label: 'Sign out', run: () => void logout() },
   ]);
 
@@ -295,7 +298,7 @@
     try { await api('/auth/logout', 'POST'); }
     catch (e) { if (!(e instanceof APIError && e.status === 401)) { error = message(e); return; } }
     stopLive(); controller?.abort(); generation++; detailGeneration++;
-    setSession(''); user = null; authExpired = false; inviting = false; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
+    setSession(''); user = null; authExpired = false; inviting = false; installing = false; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
     users = []; tags = []; password = ''; quickStatus = null; quickTitle = ''; hasLoaded = false; updateURL();
   }
 
@@ -630,7 +633,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet || inviting) return;
+    if (help || moveSheet || inviting || installing) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -779,6 +782,7 @@
       <button class="icon-button mobile-only filter-toggle" aria-label="Filters" aria-expanded={filtersOpen} onclick={() => filtersOpen = !filtersOpen}><Icon name="filter" size={18} />{#if activeFilters}<span class="badge">{activeFilters}</span>{/if}</button>
       <button class="icon-button desktop-only" aria-label="Refresh board" title="Refresh (R)" disabled={busy} onclick={() => { error = ''; void refresh(true); }}><Icon name="refresh" size={15} /></button>
       {#if user.role === 'admin'}<button class="icon-button" aria-label="Manage people" title="Manage people" onclick={() => inviting = true}><Icon name="add-person" size={17} /></button>{/if}
+      <button class="icon-button desktop-only" aria-label="Install CLI" title="Install CLI" onclick={() => installing = true}><Icon name="terminal" size={17} /></button>
       <button class="icon-button" aria-label="Commands" title="Commands (Ctrl/Cmd+K)" onclick={() => showPalette()}><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"><Icon name="more" size={18} /></span></button>
       <button class="icon-button desktop-only" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={showHelp}><Icon name="keyboard" size={16} /></button>
     </div>
@@ -815,7 +819,7 @@
     </div>
     <div class="board-footer" id="board-keyboard-hint"><span><kbd>↑ ↓ ← →</kbd> / <kbd>h j k l</kbd> navigate</span><span><kbd>Enter</kbd> open</span>{#if !readonly}<span><kbd>C</kbd> create</span>{/if}<span class="board-feedback" role="status" aria-live="polite">{moving ? 'Updating…' : announcement}</span><button class="text-button" onclick={showHelp}><kbd>?</kbd> Shortcuts</button></div>
     {#if !readonly && !openId && !(mobile && quickStatus)}<button class="fab" aria-label="New" title="New ticket (C)" onclick={() => create(mobile ? feedStatus : activeColumn)}><Icon name="plus" size={22} strokeWidth={2} /></button>{/if}
-    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} suspended={Boolean(palette || help || inviting)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
+    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} suspended={Boolean(palette || help || inviting || installing)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
     {:else}<aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${openId}`}><div class="detail-top"><span>#{openId}</span><button class="icon-button detail-close" aria-label="Close item" onclick={closeDetails}><span class="desktop-only"><Icon name="close" size={16} /></span><span class="mobile-only"><Icon name="back" size={22} /></span></button></div><p>{detailLoading ? 'Loading…' : 'Could not load item.'}</p>{#if !detailLoading}<button class="small-button" onclick={() => fetchDetail(openId)}>Retry</button>{/if}</aside>{/if}</div>{/if}
   </main>
 {/if}
@@ -837,6 +841,7 @@
     </div>
   </dialog>
 {/if}
+{#if installing && user && !authExpired}<InstallCLI email={user.email} onclose={() => installing = false} />{/if}
 {#if inviting && user?.role === 'admin' && !authExpired}<PeopleDialog {users} currentUserId={user.id} onchange={userChanged} onclose={() => inviting = false} />{/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>

@@ -33,7 +33,7 @@ make build
 ./tiki serve --db ./tiki.db
 ```
 
-Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend, and embeds it into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing `dist` output; use `make build` to ensure it is current.
+Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend and CLI downloads, and embeds them into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing frontend and CLI `dist` outputs; use `make build` to ensure it is current.
 
 `init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. New databases initialize transactionally from `internal/tiki/schema.sql`. During this pre-release stage, schema changes require a fresh database; older schema versions are rejected.
 
@@ -46,7 +46,7 @@ In another terminal, sign in and start working:
 ./tiki item list
 ```
 
-Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source after `make frontend`, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
+Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source after `make frontend cli`, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
 
 The default server is `http://127.0.0.1:8080`. Save your workspace address once, then omit it from every command:
 
@@ -58,6 +58,19 @@ The default server is `http://127.0.0.1:8080`. Save your workspace address once,
 ```
 
 Login with `--server URL` also saves that address. Selection order is `--server`, then `TIKI_SERVER`, then saved config, then the local default. The server setting lives in `tiki/config.json` under the OS configuration directory (`~/.config` on Linux) and survives logout and password changes. Existing session-only settings are still recognized. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
+
+## Install the CLI from your workspace
+
+Open **Install CLI** in the web toolbar or command menu, then copy the install command into your terminal. Every role can use it. For example:
+
+```sh
+curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com'
+tiki auth login --email you@example.com
+```
+
+The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Run the command again to upgrade. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
+
+`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache; `make cli` refreshes downloads explicitly. `make dev` prepares the same downloads, which Vite serves through its existing API proxy. While the dev server is running, run `make cli` after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
 
 ## Invite your team
 
@@ -114,7 +127,7 @@ For scripts and agents, `init`, `auth login`, and `user create` accept `--passwo
 
 One trailing line ending is removed; spaces within the password are preserved. `--json` never prompts or prints session secrets. Password changes are interactive in the CLI; automation can use the password-change API. Registration requires a valid administrator-created invite; there is no unrestricted sign-up or password-recovery endpoint. Administrators can also create accounts directly.
 
-Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, and public invite inspection/claim.
+Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, public invite inspection/claim, and CLI installer/download routes.
 
 ## Current behavior
 
@@ -136,6 +149,9 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| GET | `/api/v1/cli` | Available CLI platforms. |
+| GET | `/api/v1/cli/install.sh` | Public shell installer. |
+| GET | `/api/v1/cli/downloads/{platform}.gz` | Public compressed CLI; `{platform}.sha256` contains its checksum. |
 | POST | `/api/v1/auth/login` | Sign in with email/password. |
 | GET | `/api/v1/auth/me` | Get the signed-in user. |
 | POST | `/api/v1/auth/logout` | Revoke the current session. |

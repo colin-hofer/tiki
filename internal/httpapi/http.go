@@ -23,7 +23,11 @@ import (
 func Handler(store *tiki.Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", frontend.Handler())
+	registerDownloads(mux, downloads())
 	methods := make(map[string][]string)
+	for _, path := range []string{"/api/v1/cli", "/api/v1/cli/install.sh", "/api/v1/cli/downloads/"} {
+		methods[path] = []string{http.MethodGet, http.MethodHead}
+	}
 	attempts := &loginLimiter{windows: make(map[string]loginWindow)}
 	// Streams have their own write deadlines and do not use the JSON timeout.
 	mux.Handle("GET /api/v1/events", &eventStream{store: store, slots: make(chan struct{}, 256), heartbeat: 15 * time.Second})

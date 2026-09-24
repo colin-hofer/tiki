@@ -18,7 +18,7 @@ Open `http://127.0.0.1:5173`. This installs dependencies when needed and starts 
 
 ```sh
 # From the repository root:
-make build           # frontend checks + Vite build + Go binary with embedded assets
+make build           # frontend checks + Vite build + bundled CLI downloads + Go binary
 make check           # frontend build + Go race tests + vet + bundled binary
 npm --prefix frontend test
 ```
@@ -73,3 +73,5 @@ Authentication currently uses the existing bearer-token API. The session token i
 Admins can create single-use invite links through **Manage people** in the toolbar or command menu, then **Invite people**. The link opens a join form where recipients choose their name, email, and password; successful claims sign them in and remove the invite fragment from browser history. An expired, used, or revoked link cannot create another account. Links created in development use Vite's browser address, which proxies the public invite API just like other requests.
 
 The People dialog also supports searching the directory, changing roles, and removing access. Removal requires confirmation in the dialog and retains identity for ticket history. Removed users cannot receive new assignments; use a new invite to restore access. Changes arrive through the existing live directory updates. Members and viewers cannot access management controls, and the server enforces the same permissions.
+
+**Install CLI** is available to every signed-in user in the toolbar and command menu. The dialog loads available platforms only when opened, offers a command scoped to the current browser origin, and provides a separate sign-in command using the user's email. It never copies the browser's session token. `make dev` builds the downloads once; use `make cli` to refresh them after CLI changes without restarting Vite.
