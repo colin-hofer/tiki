@@ -142,6 +142,7 @@ Login, password-change, invite inspection, and invite-claim requests share a lim
 ## Current behavior
 
 - Items support `bug`, `feature`, and `task`. Statuses are `backlog`, `todo`, `in_progress`, `code_review`, `blocked`, `complete`, and `void`.
+- Delete tickets using the detail panel's trash button, the command menu, the touch actions sheet, or `Delete` with a ticket focused. Confirmation permanently removes the ticket and its activity; live boards refresh automatically. Stale versions must be reviewed before deleting, and drafts in other sessions remain available to copy.
 - Priority is a finite `float64`, ordered ascending with ID as the tie-breaker. Creation appends by default. Use `item move ID --before ID` or `--after ID` for positioning; scripts can also specify `--priority`. There are no discrete priority levels.
 - Ordering is workspace-wide. Tag/status filters show a subset of that order; moving relative to an item uses its neighbor in the full workspace. Repeated midpoint insertion eventually exhausts float precision, so the server atomically renumbers priorities while preserving order. That increments item versions and expires existing pagination cursors.
 - Assignment is a set: repeated `--assignee` flags on creation, then `--add-assignee`/`--remove-assignee`. Adding an existing member does not duplicate it. `item list --assignee ID` tests membership; `--assignee none` finds an empty set.
@@ -175,6 +176,7 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | GET | `/api/v1/board` | Initial board snapshot and paginated user/tag directories. |
 | POST / GET | `/api/v1/items` | Create / list items. |
 | GET / PATCH | `/api/v1/items/{id}` | Read / edit an item. |
+| DELETE | `/api/v1/items/{id}` | Member/admin: permanently delete a ticket and its activity; JSON body `{"version":N}` required. Returns `{"deleted":true}`. |
 | POST | `/api/v1/items/{id}/move` | Move before/after another item. |
 | GET | `/api/v1/items/{id}/activity` | Read durable activity. |
 | GET | `/api/v1/tags` | List tags. |

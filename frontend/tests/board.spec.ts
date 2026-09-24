@@ -50,7 +50,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
   });
   const state = { items: rows, failWrites: false, writes: 0, viewer: false, listCalls: 0, boardCalls: 0,
     beforeWrite: null as (() => Promise<void>) | null, beforeReply: null as ((item: Item) => Promise<unknown>) | null,
-    bodies: [] as Record<string, unknown>[],
+    bodies: [] as Record<string, unknown>[], methods: [] as string[],
     notify: (kind = 'change', updates: Updates = { items: rows }, count = 1): Promise<unknown[]> =>
       Promise.all(context.pages().map(page => page.evaluate(detail => window.dispatchEvent(new CustomEvent('test:remote-change', { detail })), { kind, updates, count }))) };
   await context.route('**/api/v1/**', async route => {
@@ -81,7 +81,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       return reply(list(url.searchParams.get('status'), Number(url.searchParams.get('limit')), url.searchParams.get('cursor') || ''));
     }
     if (request.method() !== 'GET') {
-      state.writes++; state.bodies.push(body);
+      state.writes++; state.bodies.push(body); state.methods.push(request.method());
       await state.beforeWrite?.();
       if (state.failWrites) return reply({ error: { code: 'internal', message: 'Save failed' } }, 500);
     }
@@ -93,6 +93,10 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
     if (!current) return reply({ error: { code: 'not_found', message: 'Item not found' } }, 404);
     if (request.method() === 'GET') return reply(current);
     if (current.version !== body.version) return reply({ error: { code: 'conflict', message: 'Item changed', current_version: current.version } }, 409);
+    if (request.method() === 'DELETE') {
+      state.items.splice(state.items.indexOf(current), 1);
+      return reply({ deleted: true });
+    }
     if (path.endsWith('/move')) {
       const anchor = state.items.find(i => i.id === (body.before || body.after))!;
       current.priority = anchor.priority + (body.before ? -1 : 1);
@@ -578,6 +582,17 @@ test.describe('phone layout', () => {
     expect(size.width).toBe(390);
     await panel.getByRole('button', { name: 'Close details', exact: true }).click();
     await expect(panel).toHaveCount(0);
+    const target = page.locator('#ticket-10'); const targetBox = (await target.boundingBox())!;
+    await target.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: targetBox.x + 20, clientY: targetBox.y + 20, isPrimary: true });
+    const actions = page.getByRole('dialog', { name: 'Actions for TK-10' });
+    await expect(actions).toBeVisible();
+    await target.dispatchEvent('pointerup', { pointerType: 'touch' });
+    await actions.getByRole('button', { name: 'Delete ticket…', exact: true }).click();
+    const confirmation = page.getByRole('dialog', { name: 'Delete TK-10?' });
+    await expect(confirmation).toBeInViewport();
+    await confirmation.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+    await expect(target).toHaveCount(0);
+    expect(state.methods.at(-1)).toBe('DELETE');
   });
 });
 
@@ -703,4 +718,124 @@ test('a conflict before the stream update fetches the latest version for explici
   await page.getByRole('button', { name: 'Keep my edits on latest', exact: true }).click();
   await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   expect(remote).toMatchObject({ title: 'My title', description: 'Remote description', version: 3 });
+});
+
+
+test('delete from details requires confirmation, restores focus, and removes the ticket', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete TK-2?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Delete ticket', exact: true })).toBeFocused();
+  expect(state.writes).toBe(0);
+  await page.keyboard.press('Delete');
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+  await expect(page.locator('.detail')).toHaveCount(0);
+  await expect(page.locator('#ticket-9')).toBeFocused();
+  await expect(page).not.toHaveURL(/item=2/);
+  expect(state.methods).toEqual(['DELETE']);
+  expect(state.items.some(i => i.id === '2')).toBe(false);
+});
+
+test('delete waits for an in-flight autosave and uses its latest version', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  let release!: () => void;
+  state.beforeReply = () => new Promise<void>(resolve => release = resolve);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('Saved before deletion');
+  await expect.poll(() => state.items.find(i => i.id === '2')?.version).toBe(2);
+  await page.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete TK-2?' });
+  await expect(dialog.getByRole('button', { name: 'Please wait…' })).toBeDisabled();
+  release();
+  await expect(dialog.getByText('Saved before deletion', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+  expect(state.methods).toEqual(['PATCH', 'DELETE']);
+  expect(state.bodies.at(-1)).toEqual({ version: 2 });
+});
+
+test('delete failures preserve an invalid draft, and confirmation can be retried', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('');
+  await page.getByLabel('Description', { exact: true }).fill('Keep this draft if deletion fails');
+  await page.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete TK-2?' });
+  state.failWrites = true;
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Save failed');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Keep this draft if deletion fails');
+  await expect(page.locator('#ticket-2')).toBeVisible();
+  state.failWrites = false;
+  await page.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+  expect(state.methods).toEqual(['DELETE', 'DELETE']);
+});
+
+test('a stale delete requires review and a fresh confirmation', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').focus();
+  await page.keyboard.press('Delete');
+  const dialog = page.getByRole('dialog', { name: 'Delete TK-2?' });
+  await expect(dialog).toBeVisible();
+  const current = state.items.find(i => i.id === '2')!;
+  current.version++; current.title = 'New work from a teammate';
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Cancel and review');
+  await expect(dialog.getByRole('button', { name: 'Delete ticket', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#ticket-2')).toContainText(current.title);
+  await page.keyboard.press('Delete');
+  await expect(dialog).toContainText(current.title);
+  await dialog.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+  expect(state.bodies.map(body => body.version)).toEqual([1, 2]);
+});
+
+test('remote deletion refreshes pagination and preserves an open unsaved draft', async ({ page, context }) => {
+  const rows = Array.from({ length: 25 }, (_, i) => item(i + 1, 'backlog'));
+  const state = await mock(context, rows); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('');
+  await page.getByLabel('Description', { exact: true }).fill('Copy this unsaved text');
+  state.items.splice(state.items.findIndex(i => i.id === '2'), 1);
+  await state.notify('change', { reset: true });
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+  await expect(page.locator('#ticket-21')).toBeVisible();
+  await expect(page.getByText('This ticket was deleted.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Copy this unsaved text');
+  await expect(page.getByLabel('Description', { exact: true })).toHaveAttribute('readonly', '');
+  await expect(page.locator('.connection')).toHaveText('Live');
+  await page.getByRole('button', { name: 'Discard draft and close' }).click();
+  await expect(page.locator('.detail')).toHaveCount(0);
+  expect(state.writes).toBe(0);
+});
+
+test('Delete edits text normally; commands expose deletion and viewers cannot delete', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Description', { exact: true }).press('Delete');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+k');
+  await page.getByRole('combobox', { name: 'Find a command' }).fill('Delete');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Delete TK-2?' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  state.viewer = true; await state.notify('change', { users: true });
+  await expect(page.getByLabel('Ticket title', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Delete ticket', exact: true })).toHaveCount(0);
+  await page.locator('.detail').focus();
+  await page.keyboard.press('Delete');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(state.writes).toBe(0);
 });

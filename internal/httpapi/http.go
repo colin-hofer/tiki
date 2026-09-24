@@ -269,6 +269,20 @@ func Handler(store *tiki.Store) http.Handler {
 		}
 		return store.Update(r.Context(), u.ID, id, in)
 	})
+	handle("DELETE /api/v1/items/{id}", "write", func(r *http.Request, u tiki.User) (any, error) {
+		id, err := tiki.ParseID(r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		var in struct {
+			Version int64 `json:"version"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		err = store.Delete(r.Context(), u.ID, id, in.Version)
+		return map[string]bool{"deleted": err == nil}, err
+	})
 	handle("POST /api/v1/items/{id}/move", "write", func(r *http.Request, u tiki.User) (any, error) {
 		id, err := tiki.ParseID(r.PathValue("id"))
 		if err != nil {

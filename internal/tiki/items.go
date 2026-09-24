@@ -154,6 +154,33 @@ func (s *Store) Get(ctx context.Context, id ID) (Item, error) {
 	return scanItem(s.read.QueryRowContext(ctx, "SELECT "+itemColumns+",i.description FROM items i WHERE i.id=?", id))
 }
 
+// Delete permanently removes an item and its activity, using the same version
+// check as edits so a stale client cannot delete someone else's newer work.
+func (s *Store) Delete(ctx context.Context, actor, id ID, version int64) error {
+	if version < 1 {
+		return invalid("version must be positive")
+	}
+	return s.transaction(ctx, func(tx *sql.Tx) error {
+		item, err := getItem(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if item.Version != version {
+			return conflict(item.Version)
+		}
+		// Insert before removing history to keep the activity revision increasing.
+		// A global event makes live clients refresh their board and pagination.
+		if err := event(ctx, tx, actor, nil, "item.deleted", map[string]ID{"id": id}); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM activity WHERE item_id=?", id); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "DELETE FROM items WHERE id=?", id)
+		return err
+	})
+}
+
 func (s *Store) Create(ctx context.Context, actor ID, in CreateItem) (Item, error) {
 	var out Item
 	if in.Type == "" {

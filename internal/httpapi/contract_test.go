@@ -20,7 +20,7 @@ func TestHTTPInputAndReadiness(t *testing.T) {
 		method, path string
 		status       int
 	}{
-		{"GET", "/api/v1/missing", 404}, {"DELETE", "/api/v1/items/1", 405}, {"OPTIONS", "/api/v1/items", 405},
+		{"GET", "/api/v1/missing", 404}, {"PUT", "/api/v1/items/1", 405}, {"OPTIONS", "/api/v1/items", 405},
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))

@@ -32,6 +32,13 @@
   let openId = $state(initialURL.searchParams.get('item') || '');
   let detail = $state<Item | null>(null);
   let detailLoading = $state(false);
+  let detailDeleted = $state(false);
+  let deleteTarget = $state<Item | null>(null);
+  let deleteDialog = $state<HTMLDialogElement>(null!);
+  let deleting = $state(false);
+  let deleteError = $state('');
+  let deleteConflict = $state(false);
+  let deleteReturn: HTMLElement | null = null;
   let quickStatus = $state<Status | null>(null);
   let quickTitle = $state('');
   let creating = $state(false);
@@ -176,6 +183,7 @@
     { id: 'mine', label: 'Filter: assigned to me', run: () => setView('', user?.id || '') },
     { id: 'refresh', label: 'Refresh tickets and apply current order', hint: 'R', run: () => void refresh(true) },
     ...(selected ? [{ id: 'open', label: `Open TK-${selectedId}`, hint: '↵', run: () => void openItem(selectedId) }] : []),
+    ...(!readonly && (selected || (detail && !detailDeleted)) ? [{ id: 'delete', label: `Delete TK-${openId && !detailDeleted ? openId : selectedId}…`, hint: 'Delete', run: () => void requestDelete(openId && !detailDeleted ? detail : selected) }] : []),
     ...(!readonly && selected ? [
       { id: 'edit', label: 'Edit ticket title', hint: 'E', run: () => void editSelected('Ticket title') },
       { id: 'description', label: 'Edit description', hint: 'D', run: () => void editSelected('Description') },
@@ -351,7 +359,7 @@
 
   async function flushChanges() {
     if ((!pendingRefresh && !pendingUsers && !pendingItems.size) || stopped || !user || authExpired || document.hidden) return;
-    if (flushingChanges || syncing || busy || moving || creating) { timer = setTimeout(flushChanges, 100); return; }
+    if (flushingChanges || syncing || busy || moving || creating || deleting) { timer = setTimeout(flushChanges, 100); return; }
     const stream = stopEvents;
     const reset = pendingRefresh || !hasLoaded;
     const directoryChanged = pendingUsers;
@@ -503,8 +511,13 @@
       lastSync = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       // A detail can be outside the loaded/filter window, so it gets its own versioned refresh.
       if (includeDetail && targetId && !creating) {
-        const incoming = await api<Item>(`/items/${targetId}`, 'GET', undefined, signal);
-        if (own === generation && targetId === openId && (!detail || incoming.version > detail.version)) detail = incoming;
+        try {
+          const incoming = await api<Item>(`/items/${targetId}`, 'GET', undefined, signal);
+          if (own === generation && targetId === openId && (!detail || incoming.version > detail.version)) detail = incoming;
+        } catch (e) {
+          if (!(e instanceof APIError && e.status === 404)) throw e;
+          if (own === generation && targetId === openId) detailDeleted = true;
+        }
       }
       return true;
     } catch (e) {
@@ -523,14 +536,19 @@
     try {
       const incoming = await api<Item>(`/items/${id}`);
       if (own === detailGeneration && openId === id && (!detail || detail.id !== id || incoming.version >= detail.version)) detail = incoming;
-    } catch (e) { if (own === detailGeneration) error = message(e); }
+    } catch (e) {
+      if (own === detailGeneration) {
+        if (e instanceof APIError && e.status === 404) detailDeleted = true;
+        else error = message(e);
+      }
+    }
     finally { if (own === detailGeneration) detailLoading = false; }
   }
 
   async function openItem(id: string, focus = true) {
     if (openId === id && !creating) { if (focus) { await tick(); document.querySelector<HTMLElement>('.detail')?.focus(); } return; }
     if (!(await guardDraft())) return;
-    quickStatus = null; openId = id; selectedId = id; detail = null; updateURL(true);
+    quickStatus = null; openId = id; selectedId = id; detail = null; detailDeleted = false; updateURL(true);
     await fetchDetail(id);
     if (focus && openId === id) { await tick(); document.querySelector<HTMLElement>(readonly || coarse ? '.detail' : '.title-editor')?.focus(); }
   }
@@ -538,7 +556,7 @@
   async function create(status: Status = activeColumn) {
     if (!(await guardDraft()) || readonly) return;
     if (!columns.includes(status)) status = columns[0] || 'todo';
-    openId = ''; detail = null; detailGeneration++; updateURL(true);
+    openId = ''; detail = null; detailDeleted = false; detailGeneration++; updateURL(true);
     quickStatus = status; quickTitle = ''; activeColumn = status;
     await tick(); document.getElementById('quick-title')?.focus();
   }
@@ -583,12 +601,56 @@
 
   async function closeDetails() {
     if (!(await guardDraft())) return;
-    openId = ''; detail = null; detailGeneration++; updateURL(true);
+    openId = ''; detail = null; detailDeleted = false; detailGeneration++; updateURL(true);
     await tick(); focusBoard();
   }
 
   async function saved(item: Item) {
+    if (detailDeleted && item.id === openId) return;
     notice = ''; await applySaved(item);
+  }
+
+  async function requestDelete(item: Item | null | undefined) {
+    if (!item || readonly || authExpired || moving || deleting || deleteTarget) return;
+    // A different open ticket must keep its edits. The target's draft is covered
+    // by the deletion confirmation, including invalid or failed edits.
+    if (item.id !== openId && !(await guardDraft())) return;
+    deleteReturn = document.activeElement as HTMLElement;
+    deleteTarget = item; deleteError = ''; deleteConflict = false; deleting = true;
+    await tick(); deleteDialog.showModal();
+    // Pause autosave, then let any already-sent save finish before capturing its version.
+    if (item.id === openId) await editor?.settle();
+    deleteTarget = (detail?.id === item.id ? detail : items.find(i => i.id === item.id)) || item;
+    deleting = false;
+    await tick(); deleteDialog.querySelector<HTMLButtonElement>('button')?.focus();
+  }
+
+  async function cancelDelete() {
+    if (deleting) return;
+    deleteDialog?.close(); deleteTarget = null;
+    await tick();
+    if (deleteReturn?.isConnected) deleteReturn.focus(); else focusBoard();
+  }
+
+  async function deleteItem() {
+    if (!deleteTarget || deleting || readonly || authExpired || deleteConflict) return;
+    const item = deleteTarget;
+    deleting = true; deleteError = '';
+    controller?.abort(); generation++; syncing = false; busy = false;
+    try {
+      try { await api(`/items/${item.id}`, 'DELETE', { version: item.version }); }
+      catch (e) { if (!(e instanceof APIError && e.status === 404)) throw e; }
+      items = items.filter(i => i.id !== item.id); pendingItems.delete(item.id);
+      if (openId === item.id) { openId = ''; detail = null; detailDeleted = false; dirty = false; detailGeneration++; updateURL(); }
+      deleteDialog.close(); deleteTarget = null;
+      announcement = `Deleted TK-${item.id}`;
+      await tick(); focusBoard();
+      await refresh(false, false, new Set([item.status]), false);
+    } catch (e) {
+      deleteConflict = e instanceof APIError && e.status === 409;
+      deleteError = deleteConflict ? 'This ticket changed. Cancel and review the latest version before deleting.' : message(e);
+      if (deleteConflict) await refresh(false);
+    } finally { deleting = false; }
   }
 
   async function clearFilters() { if (!(await guardDraft())) return; filterTag = ''; setView('', ''); }
@@ -638,7 +700,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet || inviting || installing) return;
+    if (help || moveSheet || inviting || installing || deleteTarget) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -654,6 +716,9 @@
     if (target === searchInput && ['Enter', 'ArrowDown'].includes(event.key)) { event.preventDefault(); focusColumn(boardItems[0]?.status || activeColumn, 0); return; }
     if (editing || event.ctrlKey || event.metaKey) return;
     const key = event.key;
+    if (key === 'Delete' && !event.altKey && !event.shiftKey && !event.repeat && (target.closest('.detail, .board') || target === document.body)) {
+      event.preventDefault(); void requestDelete(target.closest('.detail') ? detail : selected); return;
+    }
     if (key !== 'g') lastG = 0;
     const lower = key.toLowerCase();
     if (!event.altKey && ['/', 'c', '?', 'r'].includes(key)) {
@@ -732,7 +797,7 @@
       const url = new URL(location.href);
       query = url.searchParams.get('q') || ''; filterStatus = url.searchParams.get('status') || '';
       filterTag = url.searchParams.get('tag') || ''; filterAssignee = url.searchParams.get('assignee') || '';
-      openId = url.searchParams.get('item') || ''; creating = false; detail = null;
+      openId = url.searchParams.get('item') || ''; creating = false; detail = null; detailDeleted = false;
       if (openId) { selectedId = openId; void fetchDetail(openId); }
       void refresh(true, true);
     };
@@ -824,8 +889,8 @@
     </div>
     <div class="board-footer" id="board-keyboard-hint"><span><kbd>↑ ↓ ← →</kbd> / <kbd>h j k l</kbd> navigate</span><span><kbd>Enter</kbd> open</span>{#if !readonly}<span><kbd>C</kbd> create</span>{/if}<span class="board-feedback" role="status" aria-live="polite">{moving ? 'Updating…' : announcement}</span><button class="text-button" onclick={showHelp}><kbd>?</kbd> Shortcuts</button></div>
     {#if !readonly && !openId && !(mobile && quickStatus)}<button class="fab" aria-label="New" title="New ticket (C)" onclick={() => create(mobile ? feedStatus : activeColumn)}><Icon name="plus" size={22} strokeWidth={2} /></button>{/if}
-    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} suspended={Boolean(palette || help || inviting || installing)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
-    {:else}<aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${openId}`}><div class="detail-top"><span>#{openId}</span><button class="icon-button detail-close" aria-label="Close item" onclick={closeDetails}><span class="desktop-only"><Icon name="close" size={16} /></span><span class="mobile-only"><Icon name="back" size={22} /></span></button></div><p>{detailLoading ? 'Loading…' : 'Could not load item.'}</p>{#if !detailLoading}<button class="small-button" onclick={() => fetchDetail(openId)}>Retry</button>{/if}</aside>{/if}</div>{/if}
+    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} deleted={detailDeleted} suspended={Boolean(palette || help || inviting || installing || deleteTarget)} onmissing={() => detailDeleted = true} ondelete={() => requestDelete(detail)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
+    {:else}<aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${openId}`}><div class="detail-top"><span>#{openId}</span><button class="icon-button detail-close" aria-label="Close item" onclick={closeDetails}><span class="desktop-only"><Icon name="close" size={16} /></span><span class="mobile-only"><Icon name="back" size={22} /></span></button></div><p>{detailLoading ? 'Loading…' : detailDeleted ? 'This ticket was deleted or is no longer available.' : 'Could not load item.'}</p>{#if !detailLoading && !detailDeleted}<button class="small-button" onclick={() => fetchDetail(openId)}>Retry</button>{/if}</aside>{/if}</div>{/if}
   </main>
 {/if}
 
@@ -841,9 +906,19 @@
       <div class="sheet-group">
         <button class="sheet-option" onclick={() => sheetAction(target => openItem(target.id))}><Icon name="arrow" size={18} /><span>Open ticket</span></button>
         {#if user}{@const mine = item.assignees.includes(user.id)}<button class="sheet-option" onclick={() => sheetAction(target => { const assigned = target.assignees.includes(user!.id); return updateItem(target, { [assigned ? 'remove_assignees' : 'add_assignees']: [user!.id] }, assigned ? 'Unassigned from you' : 'Assigned to you'); })}><Icon name={mine ? 'unassigned' : 'add-person'} size={18} /><span>{mine ? 'Unassign me' : 'Assign to me'}</span></button>{/if}
+        <button class="sheet-option danger-text" onclick={() => sheetAction(requestDelete)}><Icon name="trash" size={18} /><span>Delete ticket…</span></button>
       </div>
       <button class="sheet-cancel" onclick={closeMoveSheet}>Cancel</button>
     </div>
+  </dialog>
+{/if}
+{#if deleteTarget}
+  <dialog class="delete-dialog" bind:this={deleteDialog} aria-labelledby="delete-title" aria-describedby="delete-description" oncancel={event => { event.preventDefault(); void cancelDelete(); }}>
+    <h2 id="delete-title">Delete TK-{deleteTarget.id}?</h2>
+    <p class="delete-ticket-title">{deleteTarget.title}</p>
+    <p id="delete-description">This permanently deletes the ticket and its activity. Any unsaved edits to this ticket will be discarded. This cannot be undone.</p>
+    {#if deleteError}<p class="error-banner" role="alert">{deleteError}</p>{/if}
+    <div class="button-row"><button class="small-button" disabled={deleting} onclick={cancelDelete}>Cancel</button><button class="primary-button danger-button" disabled={deleting || readonly || authExpired || deleteConflict} onclick={deleteItem}>{deleting ? 'Please wait…' : 'Delete ticket'}</button></div>
   </dialog>
 {/if}
 {#if installing && user && !authExpired}<InstallCLI email={user.email} onclose={() => installing = false} />{/if}
@@ -852,7 +927,7 @@
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>
   {#each [
     { title: 'Move around', keys: [['↑ ↓ / j k', 'Previous / next ticket'], ['← → / h l', 'Previous / next column'], ['Home / gg · End / G', 'First · last loaded ticket'], ['1–7', 'Jump to a column'], ['Enter', 'Open ticket'], ['[ ] / j k', 'Previous / next in details'], ['F6', 'Switch board / details or search']] },
-    { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] },
+    { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['Delete', 'Delete ticket (with confirmation)'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] },
     { title: 'Find and control', keys: [['/', 'Search loaded tickets'], ['Enter / ↓ in search', 'Focus first result'], ['Ctrl / ⌘ K', 'Commands'], ['↑ ↓ / Ctrl J K', 'Navigate a command menu'], ['R', 'Refresh and apply order'], ['Escape', 'Leave field, close or cancel'], ['?', 'This guide']] },
   ] as group}<h3>{group.title}</h3><dl>{#each group.keys as [keys, action]}<div><dt>{action}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{/each}
   <p>Letter shortcuts pause while typing. Escape leaves an editor field first; edits save automatically; failed saves stay safe. Tab reaches controls; arrow keys move through tickets. Search and jumps cover loaded tickets.</p></dialog>{/if}
