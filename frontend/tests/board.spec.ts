@@ -721,6 +721,26 @@ test('a conflict before the stream update fetches the latest version for explici
 });
 
 
+test('account actions keep an invalid ticket draft safe', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('');
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Change password', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Change password', exact: true });
+  await dialog.getByLabel('Current password', { exact: true }).fill('old-test-password');
+  await dialog.getByLabel('New password', { exact: true }).fill('new-test-password');
+  await dialog.getByLabel('Confirm new password', { exact: true }).fill('new-test-password');
+  await dialog.getByRole('button', { name: 'Change password', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Your ticket draft could not be saved');
+  expect(state.writes).toBe(0);
+  await page.getByRole('button', { name: 'Back to account menu' }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Changes could not be saved. Resolve the item panel before leaving.')).toBeVisible();
+});
+
 test('delete from details requires confirmation, restores focus, and removes the ticket', async ({ page, context }) => {
   const state = await mock(context); await signIn(page);
   await page.locator('#ticket-2').click();

@@ -9,6 +9,7 @@
   import Join from './Join.svelte';
   import PeopleDialog from './PeopleDialog.svelte';
   import InstallCLI from './InstallCLI.svelte';
+  import AccountDialog from './AccountDialog.svelte';
   import { flip } from 'svelte/animate';
   import { arrive, capture, duration, panel, sheet } from './motion';
 
@@ -17,6 +18,8 @@
   let inviteToken = $state(initialInvite);
   let inviting = $state(false);
   let installing = $state(false);
+  let account = $state<'menu' | 'profile' | 'password' | null>(null);
+  let accountReturn: HTMLElement | null = null;
   let user = $state<User | null>(null);
   let authExpired = $state(false);
   let checking = $state(initialInvite === null && hasSession());
@@ -24,6 +27,7 @@
   let password = $state('');
   let signingIn = $state(false);
   let loginError = $state('');
+  let loginNotice = $state('');
   let users = $state<User[]>([]);
   let tags = $state<string[]>([]);
   let items = $state<Item[]>([]);
@@ -199,6 +203,8 @@
     { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: showHelp },
     ...(user?.role === 'admin' ? [{ id: 'people', label: 'Manage people', run: () => inviting = true }] : []),
     { id: 'install', label: 'Install CLI', run: () => installing = true },
+    { id: 'profile', label: 'Edit my profile', run: () => showAccount('profile') },
+    { id: 'password', label: 'Change my password', run: () => showAccount('password') },
     { id: 'logout', label: 'Sign out', run: () => void logout() },
   ]);
 
@@ -299,18 +305,37 @@
       const url = new URL(location.href); url.hash = ''; history.replaceState(null, '', url);
       inviteToken = null;
     }
-    setSession(session.session_token); user = session.user; password = ''; authExpired = false;
+    setSession(session.session_token); user = session.user; password = ''; authExpired = false; loginNotice = '';
     await start();
   }
 
   function message(e: unknown) { return e instanceof Error ? e.message : 'Something went wrong. Please try again.'; }
+
+  function showAccount(view: 'menu' | 'profile' | 'password' = 'menu') {
+    accountReturn = document.activeElement as HTMLElement; account = view;
+  }
+  async function closeAccount() {
+    account = null; await tick();
+    if (accountReturn?.isConnected) accountReturn.focus(); else focusBoard();
+  }
+  function expireSession() {
+    if (authExpired) return;
+    controller?.abort(); generation++; detailGeneration++; syncing = false; busy = false;
+    authExpired = true; account = null; setSession(''); stopLive(); connection = 'offline';
+    loginError = 'Your session expired. Sign in again to continue. Your open draft is preserved.';
+  }
+  async function passwordChanged() {
+    email = user?.email || email;
+    expireSession(); loginError = ''; loginNotice = 'Password changed. Sign in again with your new password.';
+    await tick(); document.querySelector<HTMLInputElement>('.login-form input[type="password"]')?.focus();
+  }
 
   async function logout() {
     if (!(await guardDraft())) return;
     try { await api('/auth/logout', 'POST'); }
     catch (e) { if (!(e instanceof APIError && e.status === 401)) { error = message(e); return; } }
     stopLive(); controller?.abort(); generation++; detailGeneration++;
-    setSession(''); user = null; authExpired = false; inviting = false; installing = false; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
+    setSession(''); user = null; authExpired = false; inviting = false; installing = false; account = null; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
     users = []; tags = []; password = ''; quickStatus = null; quickTitle = ''; hasLoaded = false; updateURL();
   }
 
@@ -700,7 +725,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet || inviting || installing || deleteTarget) return;
+    if (help || moveSheet || inviting || installing || deleteTarget || account) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -776,7 +801,7 @@
 
   onMount(() => {
     if (inviteToken === null && hasSession()) void api<User>('/auth/me').then(async value => { user = value; await start(); }).catch(e => { setSession(''); loginError = message(e); }).finally(() => checking = false);
-    const expired = () => { controller?.abort(); generation++; detailGeneration++; syncing = false; busy = false; authExpired = true; setSession(''); stopLive(); connection = 'offline'; loginError = 'Your session expired. Sign in again to continue. Your open draft is preserved.'; };
+    const expired = expireSession;
     const visibility = () => { if (document.hidden) { stopLive(); streamState = connection = 'paused'; } else startLive(); };
     const online = () => startLive();
     const unload = (event: BeforeUnloadEvent) => { if (dirty || quickTitle.trim()) event.preventDefault(); };
@@ -826,6 +851,7 @@
     <form class="login-form" onsubmit={login}>
       <h1><span class="logo-mark" aria-hidden="true"></span>tiki</h1><p class="login-sub">Sign in to your workspace</p>
       {#if loginError}<p class="error-banner" role="alert">{loginError}</p>{/if}
+      {#if loginNotice}<p class="notice-banner" role="status">{loginNotice}</p>{/if}
       <label>Email<input type="email" autocomplete="username" required bind:value={email} disabled={checking || signingIn} /></label>
       <label>Password<input type="password" autocomplete="current-password" required bind:value={password} disabled={checking || signingIn} /></label>
       <button class="primary-button" disabled={checking || signingIn}>{checking ? 'Restoring session…' : signingIn ? 'Signing in…' : 'Sign in'}</button>
@@ -855,6 +881,7 @@
       <button class="icon-button desktop-only" aria-label="Install CLI" title="Install CLI" onclick={() => installing = true}><Icon name="terminal" size={17} /></button>
       <button class="icon-button" aria-label="Commands" title="Commands (Ctrl/Cmd+K)" onclick={() => showPalette()}><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"><Icon name="more" size={18} /></span></button>
       <button class="icon-button desktop-only" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={showHelp}><Icon name="keyboard" size={16} /></button>
+      <button class="icon-button" aria-label="Account menu" aria-haspopup="dialog" aria-expanded={Boolean(account)} title={user.name} onclick={() => showAccount()}><Icon name="account" size={20} /></button>
     </div>
     {#if error}<div class="board-alert error-banner" role="alert"><span>{error}</span><button class="text-button" onclick={() => { error = ''; void refresh(true); }}>Retry</button></div>{/if}
     {#if notice}<div class="board-alert notice-banner" role="status">{notice}<button class="icon-button" aria-label="Dismiss notice" onclick={() => notice = ''}><Icon name="close" size={13} /></button></div>{/if}
@@ -922,6 +949,7 @@
   </dialog>
 {/if}
 {#if installing && user && !authExpired}<InstallCLI email={user.email} onclose={() => installing = false} />{/if}
+{#if account && user && !authExpired}<AccountDialog {user} initialView={account} onchange={userChanged} onclose={closeAccount} onlogout={async () => { await closeAccount(); await logout(); }} beforePasswordChange={guardDraft} onpasswordchanged={passwordChanged} />{/if}
 {#if inviting && user?.role === 'admin' && !authExpired}<PeopleDialog {users} currentUserId={user.id} onchange={userChanged} onclose={() => inviting = false} />{/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>

@@ -8,7 +8,7 @@ if [[ $EUID != 0 ]]; then
     echo 'Run this installer as root.' >&2
     exit 1
 fi
-for command in systemctl sqlite3 curl runuser flock ss; do
+for command in systemctl sqlite3 curl runuser flock ss sha256sum; do
     if ! command -v "$command" >/dev/null; then
         echo "Missing $command. On Debian/Ubuntu: apt-get install sqlite3 curl util-linux iproute2" >&2
         exit 1
@@ -16,6 +16,19 @@ for command in systemctl sqlite3 curl runuser flock ss; do
 done
 exec 9>/run/lock/tiki-deploy.lock
 flock -n 9 || { echo 'Another Tiki deployment is running.' >&2; exit 1; }
+
+# A matching manifest allows reuse without transferring the binary. Recheck
+# under the lock, since another deployment may have finished during our build.
+if [[ ! -f tiki ]]; then cp /opt/tiki/current/tiki tiki; fi
+sha256sum --check --status SHA256SUMS
+if cmp -s tiki /opt/tiki/current/tiki && cmp -s tiki.service /opt/tiki/current/tiki.service &&
+   cmp -s tiki.service /etc/systemd/system/tiki.service &&
+   systemctl is-enabled --quiet tiki.service && systemctl is-active --quiet tiki.service &&
+   curl --fail --silent --max-time 2 http://127.0.0.1:8080/readyz >/dev/null; then
+    bash ./prune-deployments.sh /opt/tiki /var/backups/tiki
+    echo 'Tiki is already up to date and healthy; no restart needed.'
+    exit 0
+fi
 
 if ! id tiki >/dev/null 2>&1; then
     useradd --system --user-group --home-dir /var/lib/tiki --shell /usr/sbin/nologin tiki
@@ -84,6 +97,7 @@ systemctl enable tiki.service
 
 if [[ ! -f $database ]] || [[ $(sqlite3 "$database" 'SELECT count(*) FROM users;') == 0 ]]; then
     complete=true
+    bash ./prune-deployments.sh /opt/tiki /var/backups/tiki
     echo 'Installed. Create the first administrator, then start Tiki:'
     echo '  sudo -u tiki /opt/tiki/current/tiki init --db /var/lib/tiki/tiki.db --name YOUR_NAME --email YOUR_EMAIL'
     echo '  sudo systemctl start tiki'
@@ -94,6 +108,7 @@ systemctl start tiki.service
 for ((attempt=0; attempt<60; attempt++)); do
     if systemctl is-active --quiet tiki.service && curl --fail --silent --max-time 2 http://127.0.0.1:8080/readyz >/dev/null; then
         complete=true
+        bash ./prune-deployments.sh /opt/tiki /var/backups/tiki
         echo "Deployed $release; Tiki is ready on 127.0.0.1:8080."
         exit 0
     fi

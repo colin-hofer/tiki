@@ -117,6 +117,13 @@ func TestAuthHTTPLoginLogoutAndThrottle(t *testing.T) {
 	if w.Code != 200 || strings.Contains(w.Body.String(), "session_token") {
 		t.Fatalf("provisioning failed: %d", w.Code)
 	}
+	w = request("/api/v1/auth/password", session.Token, `{"current_password":"incorrect","new_password":"a new password here"}`)
+	if w.Code != 400 {
+		t.Fatalf("incorrect current password should be a form error: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.Authenticate(t.Context(), session.Token); err != nil {
+		t.Fatal("incorrect current password invalidated session", err)
+	}
 	w = request("/api/v1/auth/password", session.Token, `{"current_password":"correct horse battery staple","new_password":"a new password here"}`)
 	if w.Code != 200 {
 		t.Fatalf("password change failed: %d", w.Code)

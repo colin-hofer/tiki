@@ -95,6 +95,15 @@ func Handler(store *tiki.Store) http.Handler {
 		return store.Login(r.Context(), in.Email, in.Password)
 	})
 	handle("GET /api/v1/auth/me", "read", func(_ *http.Request, user tiki.User) (any, error) { return user, nil })
+	handle("PATCH /api/v1/auth/me", "read", func(r *http.Request, user tiki.User) (any, error) {
+		var in struct {
+			Name string `json:"name"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return store.ChangeName(r.Context(), user.ID, in.Name)
+	})
 	handle("POST /api/v1/auth/logout", "read", func(r *http.Request, _ tiki.User) (any, error) {
 		err := store.Logout(r.Context(), bearerToken(r))
 		return map[string]bool{"logged_out": err == nil}, err

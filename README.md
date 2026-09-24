@@ -45,7 +45,7 @@ For a Linux systemd host with SSH access and a Cloudflare Tunnel pointing to `ht
 ./scripts/deploy.sh root@198.199.122.239
 ```
 
-The script builds the complete app locally for the server's architecture, uploads a versioned release, installs the systemd service, backs up an existing database, and checks readiness after restart. A fresh installation prints the administrator initialization command; later deployments reuse all accounts and data. Run it again to deploy updates. See [server setup, backups, and recovery](docs/deployment.md).
+The script authenticates over SSH once, reuses cached builds, and uploads a versioned release for the server's architecture. It installs the systemd service, backs up the database, and checks readiness after restart. An unchanged healthy deployment skips the binary upload and restart. Cleanup retains the active and previous releases, seven recent deployment backups, and any older snapshots needed for those releases; manual backups and live data are preserved. A fresh installation prints the administrator initialization command. Run the same command to deploy updates. See [server setup, backups, and recovery](docs/deployment.md).
 
 In another terminal, sign in and start working:
 
@@ -80,7 +80,7 @@ tiki auth login --email you@example.com
 
 The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Run the command again to upgrade. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
 
-`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache; `make cli` refreshes downloads explicitly. `make dev` prepares the same downloads, which Vite serves through its existing API proxy. While the dev server is running, run `make cli` after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
+`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` prepares the same downloads, which Vite serves through its existing API proxy. While the dev server is running, run `make cli` after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
 
 ## Invite your team
 
@@ -151,6 +151,7 @@ Login, password-change, invite inspection, and invite-claim requests share a lim
 - Lists contain metadata, tags, and assignees; `get` includes the description. Item lists default to 50 rows, cap at 200, and return `next_cursor`; pass it as `--cursor`. Users/tags/activity use `next_after` and `--after`. Pagination is live and may shift when items move. Each item permits up to 100 assignees and 100 tags.
 - Description input supports `--description` or `--body-file FILE` (`-` reads stdin), with a 256-KiB limit. Tag names allow up to 64 characters and titles up to 300.
 - Admins invite people to create their own accounts or provision users directly with email/password credentials. Members can edit all items, and viewers can only read. All roles currently share workspace visibility. Logout, expiry, and password changes invalidate sessions on subsequent requests.
+- The account icon at the top right offers name editing, password changes, and sign out for every role. Name changes appear in the shared directory. Password changes require the current password, revoke all sessions, and return to sign-in; an incorrect current password leaves the session active.
 
 There are no automatic write retries or idempotency keys yet. If a create times out after reaching the server, inspect recent items before repeating it.
 
@@ -164,7 +165,7 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | GET | `/api/v1/cli/install.sh` | Public shell installer. |
 | GET | `/api/v1/cli/downloads/{platform}.gz` | Public compressed CLI; `{platform}.sha256` contains its checksum. |
 | POST | `/api/v1/auth/login` | Sign in with email/password. |
-| GET | `/api/v1/auth/me` | Get the signed-in user. |
+| GET / PATCH | `/api/v1/auth/me` | Get the signed-in user / update only their name with `{"name":"New Name"}` (1–200 UTF-8 bytes after trimming). |
 | POST | `/api/v1/auth/logout` | Revoke the current session. |
 | POST | `/api/v1/auth/password` | Change password using `current_password` and `new_password`; revoke all user sessions. |
 | POST / GET | `/api/v1/invites` | Admin: create (`role`, optional `expires_in` seconds, default 604800) / list active invites. |

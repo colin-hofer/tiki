@@ -4,8 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
+
+func (s *Store) ChangeName(ctx context.Context, id ID, name string) (User, error) {
+	name = strings.TrimSpace(name)
+	if !validName(name) {
+		return User{}, invalid("name must be valid UTF-8 without control characters (max 200 bytes)")
+	}
+	var user User
+	err := s.transaction(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, "UPDATE users SET name=? WHERE id=? AND removed_at=0 RETURNING id,name,email,role,removed_at", name, id).
+			Scan(&user.ID, &user.Name, &user.Email, &user.Role, &user.RemovedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return missing()
+		}
+		return err
+	})
+	return user, err
+}
 
 func (s *Store) ChangeUserRole(ctx context.Context, id ID, role string) (User, error) {
 	if role != "admin" && role != "member" && role != "viewer" {

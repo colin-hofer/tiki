@@ -15,9 +15,14 @@ apt-get install -y --no-install-recommends sqlite3 curl util-linux iproute2
 ```
 
 The local build machine needs Go from `go.mod`, Node.js 22.12+ with npm, Make,
-Bash, SSH, and SCP. An SSH alias or Tailscale hostname works as the target.
+Bash, SSH, tar, and a SHA-256 utility. `make check` also uses Python 3 for the
+deployment regression checks. An SSH alias or Tailscale hostname works as the target.
 The SSH user must be root or have passwordless sudo for installation. Keep SSH
-host-key verification enabled. Unlock encrypted SSH keys in your SSH agent first.
+host-key verification enabled. The script opens one private SSH control connection:
+enter your key passphrase once, or use an already-unlocked SSH agent. Every later
+command reuses that connection, and it is closed on exit. A lost connection fails
+the deployment instead of prompting repeatedly. No SSH configuration changes or
+passphrase storage are needed.
 
 From the repository root on your build machine:
 
@@ -25,10 +30,18 @@ From the repository root on your build machine:
 ./scripts/deploy.sh root@198.199.122.239
 ```
 
-This builds the frontend, bundles the CLI downloads, cross-compiles a static
-Linux server binary, and uploads it. No Go, Node.js, source checkout, or container
+This builds the frontend and CLI downloads in parallel, cross-compiles a stripped
+static Linux server binary, and uploads one compressed archive. No Go, Node.js, source checkout, or container
 runtime is needed on the server. The script deploys the current working tree,
 including uncommitted changes. Run `make check` before releasing changes.
+
+Unchanged frontend inputs and outputs reuse the last successful build. Go's own
+build cache handles CLI compilation, and unchanged CLI archives are reused after
+checksum verification. The cache lives in `.dev/build/` and
+`.dev/frontend-build.json`; deleting those paths forces the corresponding work
+again without touching the development database. Changed/deleted source files,
+frontend environment files, Node versions, and `VITE_*` variables invalidate the
+frontend cache.
 
 On a fresh installation, the service is installed and enabled but remains stopped
 until an administrator exists. Initialize it once over an interactive SSH session:
@@ -50,8 +63,13 @@ firewall, SSH, Tailscale, or Cloudflare configuration.
 
 ## Updates
 
-Run the same deployment command. Deployments are serialized with a server-side
-lock. After uploading, the installer stops Tiki, creates and integrity-checks a
+Run the same deployment command. If the binary and service are unchanged, the
+binary is not uploaded. A healthy matching installation is left running, while
+retention cleanup still runs. That creates no release, backup, or interruption.
+The manifest is checked again under the server-side deployment lock before any
+installation, including when the current binary is reused.
+
+For a changed installation, the installer stops Tiki, creates and integrity-checks a
 SQLite backup, switches the release symlink, starts Tiki (which runs migrations),
 and checks `/readyz`. Expect a brief interruption; browsers reconnect their live
 event streams automatically.
@@ -79,7 +97,15 @@ automatic deployment workflow is enabled by these files.
 ## Backups and recovery
 
 Deployments take a consistent backup while Tiki is stopped, before any migration.
-Old releases and backups are retained; review disk usage and prune them deliberately.
+After a successful deployment or an unchanged healthy check, cleanup keeps:
+
+- The active and previous releases. Other automatically named releases are removed.
+- The seven newest deployment backups, plus snapshots associated with the active
+  and previous releases if those are older.
+- All manually named backups and directories. The live database is never pruned.
+
+Failed deployments do not prune recovery files. Temporary uploads and the local
+SSH control socket are removed on exit, including handled interruptions.
 These local snapshots do not protect against losing the droplet. Copy backups to
 off-host storage, and schedule regular backups if data changes between deployments.
 For a manual consistent snapshot on the server:

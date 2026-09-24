@@ -74,6 +74,10 @@ func (s *Store) CreateUser(ctx context.Context, name, email, role, password stri
 	return s.createAccount(ctx, User{Name: name, Email: email, Role: role}, password, false)
 }
 
+func validName(name string) bool {
+	return name != "" && len(name) <= 200 && utf8.ValidString(name) && !strings.ContainsFunc(name, unicode.IsControl)
+}
+
 func normalizeAccount(user User, password string) (User, error) {
 	user.Name = strings.TrimSpace(user.Name)
 	user.Email = strings.ToLower(strings.TrimSpace(user.Email))
@@ -81,7 +85,7 @@ func normalizeAccount(user User, password string) (User, error) {
 	if err != nil || address.Address != user.Email || len(user.Email) > 254 {
 		return User{}, invalid("a valid email address is required")
 	}
-	if user.Name == "" || len(user.Name) > 200 || !utf8.ValidString(user.Name) || strings.ContainsFunc(user.Name, unicode.IsControl) {
+	if !validName(user.Name) {
 		return User{}, invalid("name must be valid UTF-8 without control characters (max 200 bytes)")
 	}
 	if user.Role != "admin" && user.Role != "member" && user.Role != "viewer" {
@@ -236,7 +240,7 @@ func (s *Store) ChangePassword(ctx context.Context, userID ID, current, replacem
 		return invalid("new password must contain at least 8 characters and at most 1024 bytes")
 	}
 	if len(current) > 1024 {
-		return &Error{Code: "unauthorized", Message: "current password is incorrect"}
+		return invalid("current password is incorrect")
 	}
 	var encoded, newHash string
 	if err := s.read.QueryRowContext(ctx, "SELECT password_hash FROM users WHERE id=?", userID).Scan(&encoded); err != nil {
@@ -244,7 +248,7 @@ func (s *Store) ChangePassword(ctx context.Context, userID ID, current, replacem
 	}
 	if err := s.passwordWork(ctx, func() error {
 		if !verifyPassword(encoded, current) {
-			return &Error{Code: "unauthorized", Message: "current password is incorrect"}
+			return invalid("current password is incorrect")
 		}
 		newHash = hashPassword(replacement)
 		return nil
