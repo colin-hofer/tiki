@@ -12,7 +12,7 @@
   import AccountDialog from './AccountDialog.svelte';
   import TagsDialog from './TagsDialog.svelte';
   import { flip } from 'svelte/animate';
-  import { arrive, capture, duration, panel, sheet, pin, unpin } from './motion';
+  import { arrive, capture, duration, panel, pin, unpin } from './motion';
 
   const initialURL = new URL(location.href);
   const initialInvite = new URLSearchParams(initialURL.hash.slice(1)).get('invite');
@@ -114,10 +114,6 @@
   let feedReady = false;
   let searchOpen = $state(false);
   let filtersOpen = $state(false);
-  let moveSheet = $state<Item | null>(null);
-  let sheetDialog = $state<HTMLDialogElement>(null!);
-  let sheetOpenedAt = 0;
-  let pinFeed = false;
   let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | undefined;
   let suppressClick = false;
   let activeFilters = $derived([filterAssignee, filterTag, filterStatus].filter(Boolean).length);
@@ -167,7 +163,7 @@
   function closeSearch() { query = ''; searchOpen = false; updateURL(); }
 
   // Touch: press and hold lifts a card. Drag up/down to reorder, to a screen edge or status tab to change status, release to drop.
-  // Releasing without moving opens the ticket's actions sheet. Native drag and drop is unavailable on touch screens.
+  // Native drag and drop is unavailable on touch screens.
   type TouchDrag = { item: Item; ghost: HTMLElement; dx: number; dy: number; x: number; y: number; startX: number; startY: number; moved: boolean; edgeSince: number; tabSince: number; tab: string };
   let lifted = $state<TouchDrag | null>(null);
   let dragFrame = 0;
@@ -259,7 +255,7 @@
     if (!drag) return;
     const { item, ghost } = drag;
     const status = feedStatus;
-    if (!drag.moved && status === item.status) { settle(ghost); void openMoveSheet(item); return; }
+    if (!drag.moved && status === item.status) { settle(ghost); return; }
     const anchor = items.find(i => i.id === target);
     // Same column and same slot: nothing to save.
     const others = visible.filter(i => i.status === status && i.id !== item.id);
@@ -275,20 +271,6 @@
       if (ghost.isConnected) settle(ghost);
       if (mobile) { activeColumn = status; showStatus(status, true); }
     }
-  }
-  async function openMoveSheet(item: Item) {
-    if (!(await guardDraft())) return;
-    selectedId = item.id; moveSheet = item; sheetOpenedAt = Date.now();
-    await tick(); sheetDialog?.showModal();
-  }
-  function closeMoveSheet() { if (sheetDialog?.open) sheetDialog.close(); moveSheet = null; }
-  async function sheetAction(run: (item: Item) => Promise<void> | void) {
-    // Capture the ticket before the sheet unmounts, and stay on the current status tab rather than following it.
-    const item = moveSheet, status = feedStatus;
-    closeMoveSheet();
-    if (!item) return;
-    pinFeed = true;
-    try { await run(item); } finally { pinFeed = false; if (mobile) activeColumn = status; }
   }
   let actions = $derived([
     ...(!readonly ? [{ id: 'new', label: 'Create a ticket', hint: 'C', run: () => create() }] : []),
@@ -342,7 +324,7 @@
     selectedId = next?.id || '';
     const element = document.getElementById(next ? `ticket-${next.id}` : `column-${activeColumn}`);
     element?.focus({ preventScroll: true });
-    if (!(mobile && pinFeed)) element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     preferredRow = row;
   }
 
@@ -856,7 +838,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet || inviting || installing || deleteTarget || account || managingTags) return;
+    if (help || inviting || installing || deleteTarget || account || managingTags) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -1052,24 +1034,6 @@
   </main>
 {/if}
 
-{#if moveSheet}
-  {@const item = moveSheet}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-  <dialog class="action-sheet" bind:this={sheetDialog} aria-label={`Actions for TK-${item.id}`} oncancel={event => { event.preventDefault(); closeMoveSheet(); }} onclick={event => { if (event.target === event.currentTarget && Date.now() - sheetOpenedAt > 400) closeMoveSheet(); }}>
-    <div class="sheet-body" in:sheet>
-      <div class="sheet-grip" aria-hidden="true"></div>
-      <div class="sheet-title"><span class="item-id">TK-{item.id}</span><strong>{item.title}</strong></div>
-      <h3>Move to</h3>
-      <div class="sheet-group">{#each columns.length > 1 ? columns : statuses as status}<button class="sheet-option" disabled={item.status === status} onclick={() => sheetAction(target => changeStatus(target.id, status))}><span class={`status-icon ${status}`}><Icon name={status} size={18} /></span><span>{label(status)}</span>{#if item.status === status}<span class="sheet-current">Current</span>{/if}</button>{/each}</div>
-      <div class="sheet-group">
-        <button class="sheet-option" onclick={() => sheetAction(target => openItem(target.id))}><Icon name="arrow" size={18} /><span>Open ticket</span></button>
-        {#if user}{@const mine = item.assignees.includes(user.id)}<button class="sheet-option" onclick={() => sheetAction(target => { const assigned = target.assignees.includes(user!.id); return updateItem(target, { [assigned ? 'remove_assignees' : 'add_assignees']: [user!.id] }, assigned ? 'Unassigned from you' : 'Assigned to you'); })}><Icon name={mine ? 'unassigned' : 'add-person'} size={18} /><span>{mine ? 'Unassign me' : 'Assign to me'}</span></button>{/if}
-        <button class="sheet-option danger-text" onclick={() => sheetAction(requestDelete)}><Icon name="trash" size={18} /><span>Delete ticket…</span></button>
-      </div>
-      <button class="sheet-cancel" onclick={closeMoveSheet}>Cancel</button>
-    </div>
-  </dialog>
-{/if}
 {#if deleteTarget}
   <dialog class="dlg delete-dialog" bind:this={deleteDialog} aria-labelledby="delete-title" aria-describedby="delete-description" oncancel={event => { event.preventDefault(); void cancelDelete(); }}>
     <header class="dlg-head"><h2 id="delete-title">Delete TK-{deleteTarget.id}?</h2></header>

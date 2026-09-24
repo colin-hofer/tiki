@@ -48,8 +48,3 @@ export function panel(node: HTMLElement, _: unknown, { direction }: { direction:
   const full = typeof matchMedia === 'function' && matchMedia('(max-width: 700px)').matches;
   return { duration: duration(full ? 260 : direction === 'out' ? 160 : 220), easing: cubicOut, css: (t, u) => full ? `transform: translateX(${u * 100}%)` : `transform: translateX(${u * 24}px); opacity: ${t}` };
 }
-
-// Bottom sheets rise from the screen edge.
-export function sheet(node: HTMLElement): TransitionConfig {
-  return { duration: duration(220), easing: cubicOut, css: (_, u) => `transform: translateY(${u * 100}%)` };
-}

@@ -569,22 +569,12 @@ test('pushed tickets enter and leave a filtered view without list requests', asy
 test.describe('phone layout', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('status tabs, long-press move, floating create and full-page tickets', async ({ page, context }) => {
+  test('status tabs, floating create, full-page tickets and delete', async ({ page, context }) => {
     const state = await mock(context); await signIn(page);
     const tabs = page.getByRole('group', { name: 'Statuses' });
     await tabs.getByRole('button', { name: /^In progress/ }).click();
     await expect(tabs.getByRole('button', { name: /^In progress/ })).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('#ticket-3')).toBeInViewport();
-
-    const card = page.locator('#ticket-3'); const box = (await card.boundingBox())!;
-    await card.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: box.x + 20, clientY: box.y + 20, isPrimary: true });
-    await expect(page.locator('.card-ghost')).toHaveCount(1);
-    await card.dispatchEvent('pointerup', { pointerType: 'touch' });
-    const sheet = page.getByRole('dialog', { name: 'Actions for TK-3' });
-    await expect(sheet).toBeVisible();
-    await sheet.getByRole('button', { name: 'Code review', exact: true }).click();
-    await expect.poll(() => state.items.find(i => i.id === '3')?.status).toBe('code_review');
-    await expect(tabs.getByRole('button', { name: /^In progress/ })).toHaveAttribute('aria-current', 'true');
 
     await page.getByRole('button', { name: 'New', exact: true }).click();
     await page.getByLabel('New item title').fill('Captured on the go');
@@ -597,15 +587,8 @@ test.describe('phone layout', () => {
     await expect(panel).toBeVisible();
     const size = (await panel.boundingBox())!;
     expect(size.width).toBe(390);
-    await panel.getByRole('button', { name: 'Close details', exact: true }).click();
-    await expect(panel).toHaveCount(0);
-    const target = page.locator('#ticket-10'); const targetBox = (await target.boundingBox())!;
-    await target.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: targetBox.x + 20, clientY: targetBox.y + 20, isPrimary: true });
-    await expect(page.locator('.card-ghost')).toHaveCount(1);
-    await target.dispatchEvent('pointerup', { pointerType: 'touch' });
-    const actions = page.getByRole('dialog', { name: 'Actions for TK-10' });
-    await expect(actions).toBeVisible();
-    await actions.getByRole('button', { name: 'Delete ticket…', exact: true }).click();
+    await panel.getByRole('button', { name: 'Delete ticket', exact: true }).click();
+    const target = page.locator('#ticket-10');
     const confirmation = page.getByRole('dialog', { name: 'Delete TK-10?' });
     await expect(confirmation).toBeInViewport();
     await confirmation.getByRole('button', { name: 'Delete ticket', exact: true }).click();
@@ -620,6 +603,7 @@ test.describe('phone layout', () => {
     const column = page.getByRole('region', { name: 'In progress column', exact: true });
     await expect(column.locator('.card').first()).toHaveAttribute('id', 'ticket-3');
     const touch = { pointerType: 'touch', isPrimary: true };
+    const writes = state.writes;
     const drag = async (id: string, to: (box: { x: number; y: number; width: number; height: number }) => { clientX: number; clientY: number }, hold = 0) => {
       const card = page.locator(`#ticket-${id}`); const box = (await card.boundingBox())!;
       await card.dispatchEvent('pointerdown', { ...touch, clientX: box.x + 20, clientY: box.y + 20 });
@@ -629,6 +613,16 @@ test.describe('phone layout', () => {
       if (hold) await page.waitForTimeout(hold);
       await page.locator('body').dispatchEvent('pointerup', { ...touch, ...end });
     };
+
+    // Hold and release in place puts the card back without saving or opening anything.
+    const first = page.locator('#ticket-3'); const start = (await first.boundingBox())!;
+    await first.dispatchEvent('pointerdown', { ...touch, clientX: start.x + 20, clientY: start.y + 20 });
+    await expect(page.locator('.card-ghost')).toHaveCount(1);
+    await page.locator('body').dispatchEvent('pointerup', { ...touch, clientX: start.x + 20, clientY: start.y + 20 });
+    await expect(page.locator('.card-ghost')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('complementary')).toHaveCount(0);
+    expect(state.writes).toBe(writes);
 
     // Down past the next card reorders within the column.
     const below = (await page.locator('#ticket-10').boundingBox())!;
