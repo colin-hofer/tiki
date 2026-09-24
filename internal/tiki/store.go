@@ -20,6 +20,9 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed invites.sql
+var inviteSchema string
+
 // Store owns a SQLite database. Reads use a bounded pool; writes are serialized
 // on one connection. Mutations and their activity records commit together.
 type Store struct {
@@ -63,14 +66,20 @@ func Open(path string) (*Store, error) {
 		if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 			return err
 		}
-		if version == 2 {
+		switch version {
+		case 0:
+			if _, err := tx.ExecContext(ctx, schema); err != nil {
+				return err
+			}
+			fallthrough
+		case 2:
+			_, err := tx.ExecContext(ctx, inviteSchema)
+			return err
+		case 3:
 			return nil
-		}
-		if version != 0 {
+		default:
 			return fmt.Errorf("unsupported database schema %d", version)
 		}
-		_, err := tx.ExecContext(ctx, schema)
-		return err
 	})
 	if err != nil {
 		db.Close()

@@ -52,30 +52,21 @@ func saveSession(session clientSession) error {
 	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	if err = os.MkdirAll(directory, 0700); err != nil {
+	if err = saveConfig(clientConfig{Server: session.Server}); err != nil {
 		return err
 	}
-	data, err := json.Marshal(session)
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(directory, ".session-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return writeConfig(path, session)
 }
 
 func clearSession() error {
+	// Preserve the address saved by older versions before removing credentials.
+	if _, err := loadConfig(); errors.Is(err, os.ErrNotExist) {
+		if session, err := loadSession(); err == nil {
+			if err := saveConfig(clientConfig{Server: session.Server}); err != nil {
+				return err
+			}
+		}
+	}
 	path, err := sessionPath()
 	if err != nil {
 		return err
@@ -163,7 +154,7 @@ func (a *app) authCommand() *cobra.Command {
 		if err = a.request(cmd.Context(), "POST", "/api/v1/auth/login", map[string]string{"email": email, "password": password}, &session); err != nil {
 			return err
 		}
-		server, err := serverURL(a.server)
+		server, err := a.serverURL()
 		if err != nil {
 			return err
 		}

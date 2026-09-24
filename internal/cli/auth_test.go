@@ -60,6 +60,18 @@ func TestEmailPasswordCLIFlow(t *testing.T) {
 		t.Fatal("login printed session secret")
 	}
 	// Later invocations remember both the login and selected server.
+	var invite struct {
+		ID  tiki.ID `json:"id"`
+		URL string  `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(invoke(0, "", "invite", "create", "--json")), &invite); err != nil || !strings.HasPrefix(invite.URL, server.URL+"/#invite=") {
+		t.Fatalf("bad invite output: %+v, %v", invite, err)
+	}
+	invoke(0, "", "invite", "list", "--json")
+	if strings.Contains(out.String(), "token") {
+		t.Fatal("list leaked token")
+	}
+	invoke(0, "", "invite", "revoke", invite.ID.String())
 	invoke(0, "", "item", "create", "--title", "Logged in", "--json")
 	var user tiki.User
 	if err = json.Unmarshal([]byte(invoke(0, "", "auth", "status", "--json")), &user); err != nil || user.Email != "admin@example.test" {
@@ -93,7 +105,8 @@ func TestEmailPasswordCLIFlow(t *testing.T) {
 		t.Fatal("logout did not revoke remote session")
 	}
 	invoke(5, "", "--server", server.URL, "item", "list")
-	invoke(0, password+"\n", "--server", server.URL, "auth", "login", "--email", "admin@example.test", "--password-stdin")
+	// Logging out keeps the default server, so signing back in needs no flag.
+	invoke(0, password+"\n", "auth", "login", "--email", "admin@example.test", "--password-stdin")
 	session, err = loadSession()
 	if err != nil {
 		t.Fatal(err)

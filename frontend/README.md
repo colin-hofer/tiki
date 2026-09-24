@@ -69,3 +69,5 @@ There is no periodic list polling. Idle connections receive a small heartbeat ev
 
 Authentication currently uses the existing bearer-token API. The session token is kept in tab-scoped `sessionStorage` (memory only if storage is unavailable). No password is persisted. HttpOnly browser cookies and CSRF protection require backend support; the frontend does not invent a separate authentication contract.
 
+
+Admins can create single-use invite links through **Invite people** in the toolbar or command menu. The link opens a join form where recipients choose their name, email, and password; successful claims sign them in and remove the invite fragment from browser history. An expired, used, or revoked link cannot create another account. Links created in development use Vite's browser address, which proxies the public invite API just like other requests.

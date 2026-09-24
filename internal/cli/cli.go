@@ -92,20 +92,11 @@ func (a *app) trackExecution(cmd *cobra.Command) {
 }
 
 func (a *app) command() *cobra.Command {
-	server := os.Getenv("TIKI_SERVER")
-	if server == "" {
-		if session, err := loadSession(); err == nil {
-			server = session.Server
-		}
-	}
-	if server == "" {
-		server = "http://127.0.0.1:8080"
-	}
 	root := &cobra.Command{Use: "tiki", Short: "Fast shared work tracking for developers and agents", SilenceUsage: true, SilenceErrors: true, Version: "0.1.0-dev"}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &tiki.Error{Code: "validation", Message: err.Error()} })
-	root.PersistentFlags().StringVar(&a.server, "server", server, "Server URL (or TIKI_SERVER)")
+	root.PersistentFlags().StringVar(&a.server, "server", "", "Server URL (overrides TIKI_SERVER and saved config)")
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit JSON without prompts")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "API request timeout")
-	root.AddCommand(a.initCommand(), a.serveCommand(), a.authCommand(), a.userCommand(), a.itemCommand(), a.tagCommand())
+	root.AddCommand(a.initCommand(), a.serveCommand(), a.authCommand(), a.configCommand(), a.inviteCommand(), a.userCommand(), a.itemCommand(), a.tagCommand())
 	return root
 }

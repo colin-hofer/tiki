@@ -74,7 +74,7 @@ func (s *Store) CreateUser(ctx context.Context, name, email, role, password stri
 	return s.createAccount(ctx, User{Name: name, Email: email, Role: role}, password, false)
 }
 
-func (s *Store) createAccount(ctx context.Context, user User, password string, bootstrap bool) (User, error) {
+func normalizeAccount(user User, password string) (User, error) {
 	user.Name = strings.TrimSpace(user.Name)
 	user.Email = strings.ToLower(strings.TrimSpace(user.Email))
 	address, err := mail.ParseAddress(user.Email)
@@ -90,6 +90,31 @@ func (s *Store) createAccount(ctx context.Context, user User, password string, b
 	if !validPassword(password) {
 		return User{}, invalid("password must contain at least 8 characters and at most 1024 bytes")
 	}
+	return user, nil
+}
+
+func insertAccount(ctx context.Context, tx *sql.Tx, user User, hash string) (User, error) {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=?)", user.Email).Scan(&exists); err != nil {
+		return User{}, err
+	}
+	if exists {
+		return User{}, &Error{Code: "conflict", Message: "a user with that email already exists"}
+	}
+	result, err := tx.ExecContext(ctx, "INSERT INTO users(name,email,role,password_hash) VALUES(?,?,?,?)", user.Name, user.Email, user.Role, hash)
+	if err != nil {
+		return User{}, err
+	}
+	id, err := result.LastInsertId()
+	user.ID = ID(id)
+	return user, err
+}
+
+func (s *Store) createAccount(ctx context.Context, user User, password string, bootstrap bool) (User, error) {
+	user, err := normalizeAccount(user, password)
+	if err != nil {
+		return User{}, err
+	}
 	var hash string
 	if err := s.passwordWork(ctx, func() error { hash = hashPassword(password); return nil }); err != nil {
 		return User{}, err
@@ -104,19 +129,7 @@ func (s *Store) createAccount(ctx context.Context, user User, password string, b
 				return &Error{Code: "conflict", Message: "database is already initialized; sign in with auth login"}
 			}
 		}
-		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email=?)", user.Email).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			return &Error{Code: "conflict", Message: "a user with that email already exists"}
-		}
-		result, err := tx.ExecContext(ctx, "INSERT INTO users(name,email,role,password_hash) VALUES(?,?,?,?)", user.Name, user.Email, user.Role, hash)
-		if err != nil {
-			return err
-		}
-		id, err := result.LastInsertId()
-		user.ID = ID(id)
+		user, err = insertAccount(ctx, tx, user, hash)
 		return err
 	})
 	return user, err
@@ -153,10 +166,7 @@ func (s *Store) Login(ctx context.Context, email, password string) (Session, err
 	if err != nil {
 		return Session{}, err
 	}
-	token := make([]byte, 32)
-	rand.Read(token)
-	out.Token = base64.RawURLEncoding.EncodeToString(token)
-	out.ExpiresAt = time.Now().Add(sessionLifetime).Unix()
+	out = newSession(out.User)
 	err = s.transaction(ctx, func(tx *sql.Tx) error {
 		// A concurrent password change must not resurrect a session for the old password.
 		var current string
@@ -169,10 +179,24 @@ func (s *Store) Login(ctx context.Context, email, password string) (Session, err
 		if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at<=?", time.Now().Unix()); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "INSERT INTO sessions(user_id,hash,expires_at) VALUES(?,?,?)", out.User.ID, hashSession(out.Token), out.ExpiresAt)
-		return err
+		return insertSession(ctx, tx, out)
 	})
 	return out, err
+}
+
+func randomToken() string {
+	token := make([]byte, 32)
+	rand.Read(token)
+	return base64.RawURLEncoding.EncodeToString(token)
+}
+
+func newSession(user User) Session {
+	return Session{User: user, Token: randomToken(), ExpiresAt: time.Now().Add(sessionLifetime).Unix()}
+}
+
+func insertSession(ctx context.Context, tx *sql.Tx, session Session) error {
+	_, err := tx.ExecContext(ctx, "INSERT INTO sessions(user_id,hash,expires_at) VALUES(?,?,?)", session.User.ID, hashSession(session.Token), session.ExpiresAt)
+	return err
 }
 
 func (s *Store) Authenticate(ctx context.Context, token string) (User, error) {

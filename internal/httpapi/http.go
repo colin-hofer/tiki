@@ -131,6 +131,63 @@ func Handler(store *tiki.Store) http.Handler {
 		}
 		return store.Users(r.Context(), after, limit)
 	})
+	handle("POST /api/v1/invites", "admin", func(r *http.Request, user tiki.User) (any, error) {
+		in := struct {
+			Role      string `json:"role"`
+			ExpiresIn int64  `json:"expires_in"`
+		}{ExpiresIn: 7 * 24 * 60 * 60}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		if in.ExpiresIn < 60 || in.ExpiresIn > 30*24*60*60 {
+			return nil, invalid("expires_in must be between 60 and 2592000 seconds")
+		}
+		return store.CreateInvite(r.Context(), user.ID, in.Role, time.Duration(in.ExpiresIn)*time.Second)
+	})
+	handle("GET /api/v1/invites", "admin", func(r *http.Request, _ tiki.User) (any, error) {
+		after, limit, err := pagination(r)
+		if err != nil {
+			return nil, err
+		}
+		return store.Invites(r.Context(), after, limit)
+	})
+	handle("DELETE /api/v1/invites/{id}", "admin", func(r *http.Request, _ tiki.User) (any, error) {
+		id, err := tiki.ParseID(r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		err = store.RevokeInvite(r.Context(), id)
+		return map[string]bool{"revoked": err == nil}, err
+	})
+	// Keep invite secrets in request bodies, out of URLs and access logs.
+	handle("POST /api/v1/auth/invite", "public", func(r *http.Request, _ tiki.User) (any, error) {
+		if !attempts.allow(r.RemoteAddr) {
+			return nil, &tiki.Error{Code: "rate_limited", Message: "too many authentication attempts; retry in one minute"}
+		}
+		var in struct {
+			Token string `json:"token"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		invite, err := store.Invite(r.Context(), in.Token)
+		return map[string]any{"role": invite.Role, "expires_at": invite.ExpiresAt}, err
+	})
+	handle("POST /api/v1/auth/join", "public", func(r *http.Request, _ tiki.User) (any, error) {
+		if !attempts.allow(r.RemoteAddr) {
+			return nil, &tiki.Error{Code: "rate_limited", Message: "too many authentication attempts; retry in one minute"}
+		}
+		var in struct {
+			Token    string `json:"token"`
+			Name     string `json:"name"`
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return store.ClaimInvite(r.Context(), in.Token, in.Name, in.Email, in.Password)
+	})
 	handle("POST /api/v1/items", "write", func(r *http.Request, u tiki.User) (any, error) {
 		var in tiki.CreateItem
 		if err := decode(r, &in); err != nil {

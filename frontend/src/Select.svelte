@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export interface Option { value: string; label: string; icon?: string; iconClass?: string; avatar?: string; hint?: string }
+  export interface Option { value: string; label: string; icon?: string; iconClass?: string; avatar?: string; hint?: string; description?: string }
   let sequence = 0;
 </script>
 
@@ -10,7 +10,7 @@
   // Select-only combobox: focus stays on the trigger and the list is referenced through aria-activedescendant.
   let { value = $bindable(''), options, label, placeholder = '', placeholderIcon = '', disabled = false, variant = 'plain', title = '', onchange }:
     { value?: string; options: Option[]; label: string; placeholder?: string; placeholderIcon?: string; disabled?: boolean;
-      variant?: 'plain' | 'filter' | 'property' | 'add'; title?: string; onchange?: (value: string) => void } = $props();
+      variant?: 'plain' | 'filter' | 'property' | 'add' | 'field'; title?: string; onchange?: (value: string) => void } = $props();
 
   const id = `select-${++sequence}`;
   let open = $state(false);
@@ -126,7 +126,7 @@
       <div id={`${id}-${i}`} class="select-option" class:active={i === active} role="option" tabindex="-1" aria-selected={option.value === value}
         onpointermove={() => active = i} onpointerdown={event => event.preventDefault()} onclick={() => choose(i)}>
         {#if option.avatar}<span class="mini-avatar">{option.avatar}</span>{:else if option.icon}<span class={option.iconClass || ''}><Icon name={option.icon} size={14} /></span>{/if}
-        <span class="select-label">{option.label}</span>
+        {#if option.description}<span class="select-label select-stack"><span>{option.label}</span><small>{option.description}</small></span>{:else}<span class="select-label">{option.label}</span>{/if}
         {#if option.hint}<span class="select-hint">{option.hint}</span>{/if}
         <span class="select-check">{#if option.value === value && !(option.value === '' && variant === 'add')}<Icon name="check" size={13} />{/if}</span>
       </div>

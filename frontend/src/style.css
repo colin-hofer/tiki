@@ -404,3 +404,14 @@ dialog[open]::backdrop { animation: fade-in .16s ease-out; }
   .command-dialog { margin-top: 8dvh; }
 }
 @keyframes rise { from { transform: translateY(100%); } }
+
+/* Form-field dropdowns (dialogs) */
+.select-trigger.field { width: 100%; height: 36px; padding: 0 8px 0 10px; font-size: 13px; color: var(--text); background: var(--inset); border: 1px solid var(--line); }
+.select-trigger.field:hover:not(:disabled), .select-trigger.field.open { background: var(--inset); border-color: var(--line-strong); }
+.select-trigger.field.open { border-color: var(--text-3); }
+.select-trigger.field .select-chevron { margin-left: auto; }
+.select-trigger.field > span:first-child:not(.select-value) { color: var(--text-3); }
+.select-option:has(.select-stack) { height: auto; min-height: 44px; padding-block: 6px; }
+.select-stack { display: flex; flex-direction: column; gap: 1px; white-space: normal; }
+.select-stack > small { font-size: 11px; color: var(--text-3); }
+.select-option.active .select-stack > small { color: var(--text-2); }

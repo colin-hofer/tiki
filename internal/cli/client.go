@@ -17,7 +17,7 @@ import (
 const maxResponseBytes = 16 << 20
 
 func (a *app) request(ctx context.Context, method, path string, body, out any) error {
-	server, err := serverURL(a.server)
+	server, err := a.serverURL()
 	if err != nil {
 		return err
 	}

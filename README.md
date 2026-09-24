@@ -22,7 +22,7 @@ TIKI_DEV_DB=/absolute/path/to/dev.db make dev
 TIKI_API_URL=http://127.0.0.1:8080 make dev  # use an already-running API
 ```
 
-To use the CLI against the development server, run `.dev/tiki-api auth login --server http://127.0.0.1:8081 --email dev@tiki.local`. A saved CLI login remembers that address.
+To use the CLI against the development server, run `.dev/tiki-api auth login --server http://127.0.0.1:5173 --email dev@tiki.local`. Vite forwards API requests to Go, and invite links use the same browser address. A saved CLI login remembers that address.
 
 ## Build and run the complete app
 
@@ -35,7 +35,7 @@ make build
 
 Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend, and embeds it into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing `dist` output; use `make build` to ensure it is current.
 
-`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. Existing version-2 databases remain compatible; initialization is transactional and unsupported schema versions are rejected.
+`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. Existing version-2 databases upgrade automatically to version 3 without losing accounts, sessions, or tickets; migration is transactional and unsupported schema versions are rejected.
 
 In another terminal, sign in and start working:
 
@@ -48,7 +48,33 @@ In another terminal, sign in and start working:
 
 Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source after `make frontend`, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
 
-The default server is `http://127.0.0.1:8080`. Login to another server with `--server https://tiki.example.com`; subsequent commands remember that address. Explicit `--server` or `TIKI_SERVER` takes precedence over the saved address. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
+The default server is `http://127.0.0.1:8080`. Save your workspace address once, then omit it from every command:
+
+```sh
+./tiki config set-server https://tiki.example.com
+./tiki auth login --email colin@example.com
+./tiki item list
+./tiki config show
+```
+
+Login with `--server URL` also saves that address. Selection order is `--server`, then `TIKI_SERVER`, then saved config, then the local default. The server setting lives in `tiki/config.json` under the OS configuration directory (`~/.config` on Linux) and survives logout and password changes. Existing session-only settings are still recognized. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
+
+## Invite your team
+
+As an administrator, choose **Invite people** in the web toolbar or command menu, or run:
+
+```sh
+./tiki invite create                          # member access, valid for 7 days
+./tiki invite create --role viewer --expires-in 24h
+./tiki invite list                            # active, unclaimed invites
+./tiki invite revoke 1                        # ID returned when creating/listing
+```
+
+Share the generated link privately. The recipient opens it, chooses a name, email, and password, and lands on the board signed in. Each link creates exactly one account. Links expire after seven days by default; CLI lifetimes range from one minute to 30 days. Roles are `member` (default), `viewer`, or `admin`. Recipients cannot change the assigned role. Revoke unused links from the CLI or the dialog that created them.
+
+Use the browser-facing workspace address when configuring the CLI: the link uses that address. A loopback link works only on the same computer; team invitations need your reachable HTTPS address. Invite tokens are kept in the URL fragment, out of HTTP URL/access logs, and only their hashes are stored in SQLite. Lists never reveal tokens; create another invite if a link is lost. `invite create --json` returns `id`, `url`, `role`, and `expires_at` for scripts. Other ordinary command output never prints session credentials.
+
+After joining, teammates can run `tiki config set-server https://tiki.example.com` followed by `tiki auth login --email THEIR_EMAIL` to use the CLI with their chosen password.
 
 Administrators can provision additional users with an initial password:
 
@@ -74,9 +100,9 @@ For scripts and agents, `init`, `auth login`, and `user create` accept `--passwo
 ./tiki auth login --email agent@example.com --password-stdin --json < /secure/path/password
 ```
 
-One trailing line ending is removed; spaces within the password are preserved. `--json` never prompts or prints session secrets. Password changes are interactive in the CLI; automation can use the password-change API. There is no public sign-up or password-recovery endpoint; administrators create users.
+One trailing line ending is removed; spaces within the password are preserved. `--json` never prompts or prints session secrets. Password changes are interactive in the CLI; automation can use the password-change API. Registration requires a valid administrator-created invite; there is no unrestricted sign-up or password-recovery endpoint. Administrators can also create accounts directly.
 
-Login and password-change requests allow ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, and login.
+Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, and public invite inspection/claim.
 
 ## Current behavior
 
@@ -88,7 +114,7 @@ Login and password-change requests allow ten attempts per minute per connecting 
 - API edits and moves require `version`. CLI `--if-version N` sends a version already read by the caller; otherwise the CLI fetches it immediately before submission. Agents editing previously read content should always pass that version. A stale edit exits with code 4 and reports the current version.
 - Lists contain metadata, tags, and assignees; `get` includes the description. Item lists default to 50 rows, cap at 200, and return `next_cursor`; pass it as `--cursor`. Users/tags/activity use `next_after` and `--after`. Pagination is live and may shift when items move. Each item permits up to 100 assignees and 100 tags.
 - Description input supports `--description` or `--body-file FILE` (`-` reads stdin), with a 256-KiB limit. Tag names allow up to 64 characters and titles up to 300.
-- Admins provision users with email/password credentials. Members can edit all items, and viewers can only read. All roles currently share workspace visibility. Logout, expiry, and password changes invalidate sessions on subsequent requests.
+- Admins invite people to create their own accounts or provision users directly with email/password credentials. Members can edit all items, and viewers can only read. All roles currently share workspace visibility. Logout, expiry, and password changes invalidate sessions on subsequent requests.
 
 There are no automatic write retries or idempotency keys yet. If a create times out after reaching the server, inspect recent items before repeating it.
 
@@ -102,6 +128,10 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | GET | `/api/v1/auth/me` | Get the signed-in user. |
 | POST | `/api/v1/auth/logout` | Revoke the current session. |
 | POST | `/api/v1/auth/password` | Change password using `current_password` and `new_password`; revoke all user sessions. |
+| POST / GET | `/api/v1/invites` | Admin: create (`role`, optional `expires_in` seconds, default 604800) / list active invites. |
+| DELETE | `/api/v1/invites/{id}` | Admin: revoke an unused invite. |
+| POST | `/api/v1/auth/invite` | Public: inspect a link using `{ "token": "..." }`; returns role and expiry. |
+| POST | `/api/v1/auth/join` | Public: consume an invite with `token`, `name`, `email`, `password`; returns the same session shape as login. |
 | POST / GET | `/api/v1/users` | Create a user (name, email, password, optional role) / list users. |
 | GET | `/api/v1/board` | Initial board snapshot and paginated user/tag directories. |
 | POST / GET | `/api/v1/items` | Create / list items. |
@@ -145,7 +175,7 @@ make bench          # allocation and timing benchmarks at 10k and 100k items
 
 The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run with `npm --prefix frontend test`; see [frontend/README.md](frontend/README.md) for Chromium setup.
 
-Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
+Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, single-use and concurrent invite claims, version-2 migration, persistent CLI server settings, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
 
 ```sh
 go test ./internal/tiki -run '^$' -fuzz FuzzID -fuzztime 10s -parallel 2
@@ -167,6 +197,6 @@ Keep business rules in the store and transport rules in the adapters. The store 
 
 SQLite uses WAL and `synchronous=FULL`. One connection serializes immediate write transactions, while a separate read-only pool has between two and eight connections, bounded by `GOMAXPROCS`. Every connection enables foreign keys and a five-second busy timeout. Item lists read ordering generation and rows in one deferred snapshot, so rebalancing cannot mix generations within a page. Reads do not acquire the writer lock. Mutations check versions and write activity inside the same transaction.
 
-The database schema remains version 2. For a future schema change, add an explicit transactional migration in `Open`, increment `user_version`, and test opening a populated older database. Never recreate a populated database to upgrade it. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
+The database schema is version 3. `Open` upgrades version 2 by adding the invites table in one transaction, preserving existing data. For a future schema change, add an explicit transactional migration in `Open`, increment `user_version`, and test opening a populated older database. Never recreate a populated database to upgrade it. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
 
 The web UI receives committed ticket updates over SSE and merges them without polling or refetching each ticket. Comments, full-text search, bulk operations, and backup/export commands remain roadmap work. No parent ID or nesting is implemented.

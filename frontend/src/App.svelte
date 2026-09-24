@@ -6,13 +6,18 @@
   import ItemEditor from './ItemEditor.svelte';
   import CommandMenu from './CommandMenu.svelte';
   import Select from './Select.svelte';
+  import Join from './Join.svelte';
+  import InviteDialog from './InviteDialog.svelte';
   import { flip } from 'svelte/animate';
   import { arrive, capture, duration, panel, sheet } from './motion';
 
   const initialURL = new URL(location.href);
+  const initialInvite = new URLSearchParams(initialURL.hash.slice(1)).get('invite');
+  let inviteToken = $state(initialInvite);
+  let inviting = $state(false);
   let user = $state<User | null>(null);
   let authExpired = $state(false);
-  let checking = $state(hasSession());
+  let checking = $state(initialInvite === null && hasSession());
   let email = $state('');
   let password = $state('');
   let signingIn = $state(false);
@@ -182,6 +187,7 @@
     ] : []),
     ...columns.map((status, index) => ({ id: `column-${status}`, label: `Go to ${label(status)} column`, hint: String(index + 1), run: () => focusColumn(status, preferredRow) })),
     { id: 'help', label: 'Keyboard shortcuts', hint: '?', run: showHelp },
+    ...(user?.role === 'admin' ? [{ id: 'invite', label: 'Invite people', run: () => inviting = true }] : []),
     { id: 'logout', label: 'Sign out', run: () => void logout() },
   ]);
 
@@ -265,13 +271,21 @@
     event.preventDefault(); signingIn = true; loginError = '';
     try {
       const session = await api<Session>('/auth/login', 'POST', { email, password });
-      if (user && user.id !== session.user.id) {
-        items = []; detail = null; openId = ''; quickStatus = null; quickTitle = ''; creating = false; dirty = false; selectedId = ''; filterAssignee = '';
-      }
-      setSession(session.session_token); user = session.user; password = ''; authExpired = false;
-      await start();
+      await signedIn(session);
     } catch (e) { loginError = message(e); }
     finally { signingIn = false; }
+  }
+
+  async function signedIn(session: Session) {
+    if (user && user.id !== session.user.id) {
+      items = []; detail = null; openId = ''; quickStatus = null; quickTitle = ''; creating = false; dirty = false; selectedId = ''; filterAssignee = '';
+    }
+    if (inviteToken !== null) {
+      const url = new URL(location.href); url.hash = ''; history.replaceState(null, '', url);
+      inviteToken = null;
+    }
+    setSession(session.session_token); user = session.user; password = ''; authExpired = false;
+    await start();
   }
 
   function message(e: unknown) { return e instanceof Error ? e.message : 'Something went wrong. Please try again.'; }
@@ -281,7 +295,7 @@
     try { await api('/auth/logout', 'POST'); }
     catch (e) { if (!(e instanceof APIError && e.status === 401)) { error = message(e); return; } }
     stopLive(); controller?.abort(); generation++; detailGeneration++;
-    setSession(''); user = null; authExpired = false; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
+    setSession(''); user = null; authExpired = false; inviting = false; items = []; detail = null; openId = ''; selectedId = ''; creating = false;
     users = []; tags = []; password = ''; quickStatus = null; quickTitle = ''; hasLoaded = false; updateURL();
   }
 
@@ -605,7 +619,7 @@
     if (!user || authExpired || event.isComposing || event.defaultPrevented) return;
     const target = event.target as HTMLElement;
     const editing = target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])');
-    if (help || moveSheet) return;
+    if (help || moveSheet || inviting) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !event.altKey) { event.preventDefault(); if (palette) void closePalette(); else showPalette(); return; }
     if (palette) return;
     if (event.key === 'F6') { event.preventDefault(); if (target.closest('.detail')) { if (matchMedia('(max-width: 800px)').matches) void closeDetails(); else focusBoard(); } else if (openId) document.querySelector<HTMLElement>('.detail')?.focus(); else searchInput.focus(); return; }
@@ -677,7 +691,7 @@
   }
 
   onMount(() => {
-    if (hasSession()) void api<User>('/auth/me').then(async value => { user = value; await start(); }).catch(e => { setSession(''); loginError = message(e); }).finally(() => checking = false);
+    if (inviteToken === null && hasSession()) void api<User>('/auth/me').then(async value => { user = value; await start(); }).catch(e => { setSession(''); loginError = message(e); }).finally(() => checking = false);
     const expired = () => { controller?.abort(); generation++; detailGeneration++; syncing = false; busy = false; authExpired = true; setSession(''); stopLive(); connection = 'offline'; loginError = 'Your session expired. Sign in again to continue. Your open draft is preserved.'; };
     const visibility = () => { if (document.hidden) { stopLive(); streamState = connection = 'paused'; } else startLive(); };
     const online = () => startLive();
@@ -707,7 +721,9 @@
 
 <svelte:window onkeydown={keyboard} />
 
-{#if !user || authExpired}
+{#if inviteToken !== null}
+  <Join token={inviteToken} onjoin={signedIn} />
+{:else if !user || authExpired}
   <div class="login-screen">
     <form class="login-form" onsubmit={login}>
       <h1><span class="logo-mark" aria-hidden="true"></span>tiki</h1><p class="login-sub">Sign in to your workspace</p>
@@ -719,7 +735,7 @@
   </div>
 {/if}
 
-{#if user}
+{#if user && inviteToken === null}
   <main class="app" inert={authExpired}>
     <div class="toolbar">
       <span class="wordmark"><span class="logo-mark" aria-hidden="true"></span>tiki</span>
@@ -737,6 +753,7 @@
       <button class="icon-button mobile-only" aria-label="Search" onclick={openSearch}><Icon name="search" size={18} /></button>
       <button class="icon-button mobile-only filter-toggle" aria-label="Filters" aria-expanded={filtersOpen} onclick={() => filtersOpen = !filtersOpen}><Icon name="filter" size={18} />{#if activeFilters}<span class="badge">{activeFilters}</span>{/if}</button>
       <button class="icon-button desktop-only" aria-label="Refresh board" title="Refresh (R)" disabled={busy} onclick={() => { error = ''; void refresh(true); }}><Icon name="refresh" size={15} /></button>
+      {#if user.role === 'admin'}<button class="icon-button" aria-label="Invite people" title="Invite people" onclick={() => inviting = true}><Icon name="add-person" size={17} /></button>{/if}
       <button class="icon-button" aria-label="Commands" title="Commands (Ctrl/Cmd+K)" onclick={() => showPalette()}><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"><Icon name="more" size={18} /></span></button>
       <button class="icon-button desktop-only" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={showHelp}><Icon name="keyboard" size={16} /></button>
     </div>
@@ -773,7 +790,7 @@
     </div>
     <div class="board-footer" id="board-keyboard-hint"><span><kbd>↑ ↓ ← →</kbd> / <kbd>h j k l</kbd> navigate</span><span><kbd>Enter</kbd> open</span>{#if !readonly}<span><kbd>C</kbd> create</span>{/if}<span class="board-feedback" role="status" aria-live="polite">{moving ? 'Updating…' : announcement}</span><button class="text-button" onclick={showHelp}><kbd>?</kbd> Shortcuts</button></div>
     {#if !readonly && !openId && !(mobile && quickStatus)}<button class="fab" aria-label="New" title="New ticket (C)" onclick={() => create(mobile ? feedStatus : activeColumn)}><Icon name="plus" size={22} strokeWidth={2} /></button>{/if}
-    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} suspended={Boolean(palette || help)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
+    {#if openId}<div class="detail-shell" transition:panel>{#if detail}{#key openId}<ItemEditor bind:this={editor} currentUserId={user.id} item={detail} {users} {tags} readonly={readonly || authExpired} suspended={Boolean(palette || help || inviting)} canPrevious={openedIndex > 0} canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1} onnavigate={adjacentItem} onclose={closeDetails} onsave={saved} ondirty={value => dirty = value} />{/key}
     {:else}<aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${openId}`}><div class="detail-top"><span>#{openId}</span><button class="icon-button detail-close" aria-label="Close item" onclick={closeDetails}><span class="desktop-only"><Icon name="close" size={16} /></span><span class="mobile-only"><Icon name="back" size={22} /></span></button></div><p>{detailLoading ? 'Loading…' : 'Could not load item.'}</p>{#if !detailLoading}<button class="small-button" onclick={() => fetchDetail(openId)}>Retry</button>{/if}</aside>{/if}</div>{/if}
   </main>
 {/if}
@@ -795,6 +812,7 @@
     </div>
   </dialog>
 {/if}
+{#if inviting && user?.role === 'admin' && !authExpired}<InviteDialog onclose={() => inviting = false} />{/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>
   {#each [
