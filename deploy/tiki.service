@@ -1,0 +1,22 @@
+[Unit]
+Description=Tiki work tracking
+After=network.target
+
+[Service]
+User=tiki
+Group=tiki
+WorkingDirectory=/var/lib/tiki
+StateDirectory=tiki
+StateDirectoryMode=0700
+ExecStart=/opt/tiki/current/tiki serve --listen 127.0.0.1:8080 --db /var/lib/tiki/tiki.db
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

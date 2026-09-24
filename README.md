@@ -35,7 +35,17 @@ make build
 
 Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend and CLI downloads, and embeds them into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing frontend and CLI `dist` outputs; use `make build` to ensure it is current.
 
-`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. New databases initialize transactionally from `internal/tiki/schema.sql`. During this pre-release stage, schema changes require a fresh database; older schema versions are rejected.
+`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. New databases initialize automatically. Existing schema versions 2 and 3 upgrade to version 4 transactionally, preserving data. Newer, unsupported schemas are rejected without resetting the database.
+
+## Deploy to a server
+
+For a Linux systemd host with SSH access and a Cloudflare Tunnel pointing to `http://127.0.0.1:8080`:
+
+```sh
+./scripts/deploy.sh root@198.199.122.239
+```
+
+The script builds the complete app locally for the server's architecture, uploads a versioned release, installs the systemd service, backs up an existing database, and checks readiness after restart. A fresh installation prints the administrator initialization command; later deployments reuse all accounts and data. Run it again to deploy updates. See [server setup, backups, and recovery](docs/deployment.md).
 
 In another terminal, sign in and start working:
 
@@ -226,6 +236,6 @@ Keep business rules in the store and transport rules in the adapters. The store 
 
 SQLite uses WAL and `synchronous=FULL`. One connection serializes immediate write transactions, while a separate read-only pool has between two and eight connections, bounded by `GOMAXPROCS`. Every connection enables foreign keys and a five-second busy timeout. Item lists read ordering generation and rows in one deferred snapshot, so rebalancing cannot mix generations within a page. Reads do not acquire the writer lock. Mutations check versions and write activity inside the same transaction.
 
-All tables, indexes, and triggers are defined in `internal/tiki/schema.sql` (currently schema version 4). There are no migrations or compatibility layers during this pre-release stage; use a fresh database when the schema changes. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
+`internal/tiki/schema.sql` is the immutable version 2 baseline. Numbered SQL files in `internal/tiki/migrations/` upgrade it to the current schema (version 4). Opening the database applies all pending migrations in one immediate transaction, including the version update; any error rolls back the whole upgrade. Concurrent opens serialize, and schemas newer than the binary are rejected. Add a new numbered SQL file and increment `schemaVersion` in `migrations.go` for future changes; never edit an applied migration. Version 1 predates the available schema history and is not supported. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
 
 The web UI receives committed ticket updates over SSE and merges them without polling or refetching each ticket. Comments, full-text search, bulk operations, and backup/export commands remain roadmap work. No parent ID or nesting is implemented.

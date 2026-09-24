@@ -15,6 +15,7 @@ cli:
 	sh scripts/build-cli.sh
 
 check: fmt test vet build
+	bash -n scripts/deploy.sh scripts/install-server.sh
 
 fmt:
 	@test -z "$$(gofmt -l main.go internal frontend/*.go)" || { gofmt -l main.go internal frontend/*.go; exit 1; }

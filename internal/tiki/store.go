@@ -3,7 +3,6 @@ package tiki
 import (
 	"context"
 	"database/sql"
-	_ "embed"
 	"errors"
 	"fmt"
 	"net/url"
@@ -16,9 +15,6 @@ import (
 
 	_ "modernc.org/sqlite"
 )
-
-//go:embed schema.sql
-var schema string
 
 // Store owns a SQLite database. Reads use a bounded pool; writes are serialized
 // on one connection. Mutations and their activity records commit together.
@@ -56,21 +52,10 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s := &Store{write: db, passwordSlots: make(chan struct{}, 2), changed: make(chan struct{})}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	err = s.transaction(ctx, func(tx *sql.Tx) error {
-		var version int
-		if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-			return err
-		}
-		if version == 4 {
-			return nil
-		}
-		if version != 0 {
-			return fmt.Errorf("unsupported database schema %d; this build requires schema 4 (use a new database)", version)
-		}
-		_, err := tx.ExecContext(ctx, schema)
-		return err
+		return migrate(ctx, tx)
 	})
 	if err != nil {
 		db.Close()

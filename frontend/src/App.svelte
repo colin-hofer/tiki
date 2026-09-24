@@ -156,7 +156,7 @@
   function pressMove(event: PointerEvent) { if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 8) pressEnd(); }
   function pressEnd() { if (press) { clearTimeout(press.timer); press = undefined; } }
   async function openMoveSheet(item: Item) {
-    if (!guardDraft()) return;
+    if (!(await guardDraft())) return;
     selectedId = item.id; moveSheet = item; sheetOpenedAt = Date.now();
     await tick(); sheetDialog?.showModal();
   }
@@ -238,10 +238,10 @@
     if (control?.getAttribute('role') === 'combobox' && control.getAttribute('aria-expanded') !== 'true') control.click();
   }
 
-  function propertyMenu(mode: Exclude<Menu, 'commands'>) {
+  async function propertyMenu(mode: Exclude<Menu, 'commands'>) {
     if (readonly || moving) return;
     if (openId && (document.activeElement?.closest('.detail') || selectedId === openId)) { void editSelected({ status: 'Ticket status', assignee: 'Add assignee', tags: 'Add tag', type: 'Ticket type' }[mode]); return; }
-    if (!selected || !guardDraft()) return;
+    if (!selected || !(await guardDraft())) return;
     menuItem = selected; showPalette(mode);
   }
 
@@ -264,10 +264,14 @@
     if (url.href !== location.href) history[push ? 'pushState' : 'replaceState']({}, '', url);
   }
 
-  function guardDraft() {
-    if (!dirty && !quickTitle.trim()) { notice = ''; return true; }
-    notice = 'Save or discard the open draft first.';
-    return false;
+  async function guardDraft() {
+    if (quickTitle.trim()) { notice = 'Finish or cancel the new ticket first.'; return false; }
+    if (editor && !(await editor.flush())) {
+      notice = 'Changes could not be saved. Resolve the item panel before leaving.';
+      document.querySelector<HTMLElement>('.detail')?.focus();
+      return false;
+    }
+    notice = ''; return true;
   }
 
   async function login(event: SubmitEvent) {
@@ -294,7 +298,7 @@
   function message(e: unknown) { return e instanceof Error ? e.message : 'Something went wrong. Please try again.'; }
 
   async function logout() {
-    if (!guardDraft()) return;
+    if (!(await guardDraft())) return;
     try { await api('/auth/logout', 'POST'); }
     catch (e) { if (!(e instanceof APIError && e.status === 401)) { error = message(e); return; } }
     stopLive(); controller?.abort(); generation++; detailGeneration++;
@@ -525,14 +529,14 @@
 
   async function openItem(id: string, focus = true) {
     if (openId === id && !creating) { if (focus) { await tick(); document.querySelector<HTMLElement>('.detail')?.focus(); } return; }
-    if (!guardDraft()) return;
+    if (!(await guardDraft())) return;
     quickStatus = null; openId = id; selectedId = id; detail = null; updateURL(true);
     await fetchDetail(id);
     if (focus && openId === id) { await tick(); document.querySelector<HTMLElement>(readonly || coarse ? '.detail' : '.title-editor')?.focus(); }
   }
 
   async function create(status: Status = activeColumn) {
-    if (readonly || !guardDraft()) return;
+    if (!(await guardDraft()) || readonly) return;
     if (!columns.includes(status)) status = columns[0] || 'todo';
     openId = ''; detail = null; detailGeneration++; updateURL(true);
     quickStatus = status; quickTitle = ''; activeColumn = status;
@@ -560,7 +564,8 @@
   }
 
   async function updateItem(item: Item, patch: Record<string, unknown>, feedback: string) {
-    if (readonly || moving || !guardDraft()) return;
+    if (!(await guardDraft()) || readonly || moving) return;
+    item = items.find(current => current.id === item.id) || item;
     moving = true; error = ''; controller?.abort(); generation++; syncing = false; busy = false;
     try {
       const updated = await api<Item>(`/items/${item.id}`, 'PATCH', { version: item.version, ...patch });
@@ -577,19 +582,18 @@
   }
 
   async function closeDetails() {
-    if (!guardDraft()) return;
+    if (!(await guardDraft())) return;
     openId = ''; detail = null; detailGeneration++; updateURL(true);
     await tick(); focusBoard();
   }
 
   async function saved(item: Item) {
-    dirty = false; notice = ''; openId = item.id; selectedId = item.id; detail = item;
-    updateURL(true); await applySaved(item);
+    notice = ''; await applySaved(item);
   }
 
-  function clearFilters() { if (!guardDraft()) return; filterTag = ''; setView('', ''); }
-  function setView(status: string, assignee: string) {
-    if (!guardDraft()) return;
+  async function clearFilters() { if (!(await guardDraft())) return; filterTag = ''; setView('', ''); }
+  async function setView(status: string, assignee: string) {
+    if (!(await guardDraft())) return;
     filterStatus = status; filterAssignee = assignee; query = ''; updateURL(true); void refresh(true, true);
   }
   function filterChanged() {
@@ -606,7 +610,8 @@
   }
 
   async function moveTo(current: Item, anchor: Item, before: boolean) {
-    if (readonly || moving || current.id === anchor.id || !guardDraft()) return;
+    if (current.id === anchor.id || !(await guardDraft()) || readonly || moving) return;
+    current = items.find(item => item.id === current.id) || current;
     moving = true; error = '';
     controller?.abort(); generation++; syncing = false; busy = false;
     let changedStatus = false;
@@ -710,10 +715,10 @@
     const visibility = () => { if (document.hidden) { stopLive(); streamState = connection = 'paused'; } else startLive(); };
     const online = () => startLive();
     const unload = (event: BeforeUnloadEvent) => { if (dirty || quickTitle.trim()) event.preventDefault(); };
-    const hashchange = () => {
+    const hashchange = async () => {
       const url = new URL(location.href);
       if (new URLSearchParams(url.hash.slice(1)).get('invite') === inviteToken) return;
-      if (!guardDraft()) {
+      if (!(await guardDraft())) {
         url.hash = inviteToken === null ? '' : `invite=${encodeURIComponent(inviteToken)}`;
         history.replaceState(null, '', url);
         return;
@@ -722,8 +727,8 @@
       // Reload to start onboarding with the same clean state as opening a new tab.
       location.reload();
     };
-    const popstate = () => {
-      if (!guardDraft()) { updateURL(); return; }
+    const popstate = async () => {
+      if (!(await guardDraft())) { updateURL(); return; }
       const url = new URL(location.href);
       query = url.searchParams.get('q') || ''; filterStatus = url.searchParams.get('status') || '';
       filterTag = url.searchParams.get('tag') || ''; filterAssignee = url.searchParams.get('assignee') || '';
@@ -847,7 +852,7 @@
 {#if help}<dialog class="help-dialog" bind:this={helpDialog} oncancel={event => { event.preventDefault(); void closeHelp(); }} aria-label="Keyboard shortcuts"><div class="detail-top"><h2>Keyboard shortcuts</h2><button class="icon-button" aria-label="Close shortcuts" onclick={closeHelp}><Icon name="close" size={15} /></button></div>
   {#each [
     { title: 'Move around', keys: [['↑ ↓ / j k', 'Previous / next ticket'], ['← → / h l', 'Previous / next column'], ['Home / gg · End / G', 'First · last loaded ticket'], ['1–7', 'Jump to a column'], ['Enter', 'Open ticket'], ['[ ] / j k', 'Previous / next in details'], ['F6', 'Switch board / details or search']] },
-    { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] },
+    { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] },
     { title: 'Find and control', keys: [['/', 'Search loaded tickets'], ['Enter / ↓ in search', 'Focus first result'], ['Ctrl / ⌘ K', 'Commands'], ['↑ ↓ / Ctrl J K', 'Navigate a command menu'], ['R', 'Refresh and apply order'], ['Escape', 'Leave field, close or cancel'], ['?', 'This guide']] },
   ] as group}<h3>{group.title}</h3><dl>{#each group.keys as [keys, action]}<div><dt>{action}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{/each}
-  <p>Letter shortcuts pause while typing. Escape leaves an editor field first; unsaved edits stay safe. Tab reaches controls; arrow keys move through tickets. Search and jumps cover loaded tickets.</p></dialog>{/if}
+  <p>Letter shortcuts pause while typing. Escape leaves an editor field first; edits save automatically; failed saves stay safe. Tab reaches controls; arrow keys move through tickets. Search and jumps cover loaded tickets.</p></dialog>{/if}

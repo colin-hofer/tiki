@@ -49,13 +49,15 @@ The board keeps one ticket in the Tab order; arrows move between tickets without
 | Refresh and apply current order | R |
 | Previous / next open ticket | [ / ] or K / J outside a field |
 | Switch board and details (or search) | F6 |
-| Save / save and close | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
+| Save immediately / save and close | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
 
-Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; unsaved edits block closing or switching tickets. On narrow screens, Tab stays inside details and F6 returns to the board when the draft is clean.
+Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; closing or switching tickets finishes pending saves first. Invalid fields, failed saves, and conflicts keep the panel open until resolved. On narrow screens, Tab stays inside details and F6 finishes pending saves and returns to the board.
 
-On the board, property shortcuts open searchable action menus and save the chosen change immediately. In details, they focus the corresponding field; M changes the assignment draft. Menus accept arrows, Ctrl+J/K, Ctrl+N/P, or Alt+J/K and Enter. Escape returns focus to the trigger. Quick changes and failed saves retain version checks and never retry writes automatically.
+On the board, property shortcuts open searchable action menus and save the chosen change immediately. In details, they focus the corresponding field; M changes your assignment. Menus accept arrows, Ctrl+J/K, Ctrl+N/P, or Alt+J/K and Enter. Escape returns focus to the trigger. Quick changes and failed saves retain version checks and never retry writes automatically.
 
-Inline creation uses Enter to add another ticket, Shift+Enter for a line break, Ctrl/Cmd+Enter to add and open details, and Escape to cancel. Current tag/assignee filters become defaults. Tags still being typed are included when saving the editor.
+Inline creation uses Enter to add another ticket, Shift+Enter for a line break, Ctrl/Cmd+Enter to add and open details, and Escape to cancel. Current tag/assignee filters become defaults. Tags are committed with Enter, the add button, or leaving the tag field; closing the panel also commits a pending tag.
+
+The item panel saves automatically: title and description changes save after 500 ms without typing or when leaving the field; status, type, assignment, and committed tags save immediately. Fields remain editable during requests, with later changes sent sequentially against the acknowledged version. The footer shows saving and saved state. Errors stop automatic retries and retain the draft with **Retry save** and **Discard unsaved changes** actions. Conflicts require explicit reconciliation before autosave resumes. Ctrl/Cmd+Enter still saves immediately.
 
 Drag above or below a card to reorder, including across statuses; dropping on a column changes status. Cross-column card drops use a status update followed by a priority move and report a partial failure if only the first succeeds. Ordering uses the API's workspace-wide before/after semantics.
 

@@ -49,6 +49,8 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
     };
   });
   const state = { items: rows, failWrites: false, writes: 0, viewer: false, listCalls: 0, boardCalls: 0,
+    beforeWrite: null as (() => Promise<void>) | null, beforeReply: null as ((item: Item) => Promise<unknown>) | null,
+    bodies: [] as Record<string, unknown>[],
     notify: (kind = 'change', updates: Updates = { items: rows }, count = 1): Promise<unknown[]> =>
       Promise.all(context.pages().map(page => page.evaluate(detail => window.dispatchEvent(new CustomEvent('test:remote-change', { detail })), { kind, updates, count }))) };
   await context.route('**/api/v1/**', async route => {
@@ -79,7 +81,8 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       return reply(list(url.searchParams.get('status'), Number(url.searchParams.get('limit')), url.searchParams.get('cursor') || ''));
     }
     if (request.method() !== 'GET') {
-      state.writes++;
+      state.writes++; state.bodies.push(body);
+      await state.beforeWrite?.();
       if (state.failWrites) return reply({ error: { code: 'internal', message: 'Save failed' } }, 500);
     }
     if (path === '/items' && request.method() === 'POST') {
@@ -97,7 +100,7 @@ async function mock(context: BrowserContext, rows = Array.from({ length: 12 }, (
       for (const key of ['title', 'description', 'status', 'type'] as const) if (key in body) Object.assign(current, { [key]: body[key] });
       for (const [field, add, remove] of [['tags', 'add_tags', 'remove_tags'], ['assignees', 'add_assignees', 'remove_assignees']] as const) current[field] = [...new Set([...current[field].filter(v => !(body[remove] || []).includes(v)), ...(body[add] || [])])] as string[];
     }
-    current.version++; return reply(current);
+    current.version++; await state.beforeReply?.(current); return reply(current);
   });
   return state;
 }
@@ -126,8 +129,7 @@ test('live role changes update permissions without losing an open draft', async 
   await state.notify('change', { users: true });
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeEnabled();
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   expect(state.items.find(item => item.id === '2')?.title).toBe('Keep my draft');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
@@ -159,7 +161,7 @@ test('fullscreen board supports keyboard capture, navigation, moves, and editing
   await page.keyboard.press('Enter');
   await page.getByLabel('Ticket title').fill('Edited by keyboard');
   await page.keyboard.press('Control+Enter');
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('complementary', { name: 'Item 13', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
@@ -180,7 +182,6 @@ test('live changes move remote cards, preserves drafts, and reconciles version c
   await expect(page.getByText('Updated by someone else')).toBeVisible();
   await page.getByRole('button', { name: 'Keep my edits on latest' }).click();
   await expect(page.getByLabel('Ticket title')).toHaveValue('Changed by another user');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.poll(() => remote.description).toBe('My unsaved draft');
   expect(remote.title).toBe('Changed by another user');
   expect(remote.status).toBe('code_review');
@@ -203,11 +204,10 @@ test('failed saves keep draft and viewer controls cannot mutate', async ({ page,
   await page.locator('#ticket-1').click();
   await page.getByLabel('Ticket title').fill('Do not lose this draft');
   state.failWrites = true;
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Save failed', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Ticket title')).toHaveValue('Do not lose this draft');
   expect(state.writes).toBe(1);
-  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard unsaved changes', exact: true }).click();
   state.viewer = true; state.failWrites = false;
   await page.reload(); await expect(page.locator('.connection')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
@@ -316,7 +316,7 @@ test('create and fully edit a ticket without losing pending tags or drafts', asy
   await expect(page.getByRole('combobox', { name: 'Add assignee', exact: true })).toBeFocused();
   await page.keyboard.press('ArrowDown'); await page.keyboard.press('a'); await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Remove assignee Alex Morgan' })).toBeVisible();
-  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
   await expect(panel).toBeFocused();
   await page.keyboard.press('m');
   await expect(page.getByRole('button', { name: 'Remove assignee Alex Morgan' })).toHaveCount(0);
@@ -325,11 +325,11 @@ test('create and fully edit a ticket without losing pending tags or drafts', asy
   await page.keyboard.press('s');
   await expect(page.getByRole('combobox', { name: 'Ticket status', exact: true })).toBeFocused();
   await page.keyboard.press('ArrowDown'); await page.keyboard.press('i'); await page.keyboard.press('Enter');
-  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('y');
   await expect(page.getByRole('combobox', { name: 'Ticket type', exact: true })).toBeFocused();
   await page.keyboard.press('ArrowDown'); await page.keyboard.press('b'); await page.keyboard.press('Enter');
-  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('d');
   await expect(page.getByLabel('Description', { exact: true })).toBeFocused();
   await page.getByLabel('Description', { exact: true }).fill('hjkl / c a s t y should stay text');
@@ -337,11 +337,7 @@ test('create and fully edit a ticket without losing pending tags or drafts', asy
   await page.keyboard.press('t');
   await page.getByLabel('Add tag').fill('new-label');
   await page.keyboard.press('Escape');
-  await page.keyboard.press(']');
-  await expect(panel).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByText('Save or discard the open draft first.')).toBeVisible();
-  await page.keyboard.press('Control+Shift+Enter');
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
   await expect(panel).toHaveCount(0);
   await expect(page.locator('#ticket-13')).toBeFocused();
   const created = state.items.find(i => i.id === '13')!;
@@ -444,10 +440,10 @@ test('saving a pending tag works from its field and failed save-and-close preser
   await expect(page.getByLabel('Add tag')).toBeFocused();
   await expect(page.getByRole('button', { name: 'Remove tag keyboard', exact: true })).toBeVisible();
   state.failWrites = false;
-  await page.keyboard.press('Control+Enter');
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry save', exact: true }).click();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   expect(state.items.find(i => i.id === '2')?.tags).toEqual(['frontend', 'keyboard']);
-  await page.keyboard.press('Control+Shift+Enter');
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
   await expect(page.locator('.detail')).toHaveCount(0);
   await expect(page.locator('#ticket-2')).toBeFocused();
 });
@@ -497,6 +493,7 @@ test('reconnection recovers missed changes and revocation preserves an open draf
   const state = await mock(context);
   await signIn(page);
   await page.locator('#ticket-2').click();
+  state.failWrites = true;
   await page.getByLabel('Description', { exact: true }).fill('My unsaved draft');
   await state.notify('disconnect');
   await expect(page.locator('.connection')).toHaveText('Offline');
@@ -545,7 +542,6 @@ test('pushed tickets enter and leave a filtered view without list requests', asy
   expect(state.listCalls).toBe(reads);
   await page.locator('#ticket-2').click();
   await page.getByLabel('Ticket title').fill('Saved directly');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.locator('#ticket-2')).toContainText('Saved directly');
   expect(state.listCalls).toBe(reads);
 });
@@ -614,4 +610,97 @@ test('updates beyond a history preview do not refetch that column', async ({ pag
   expect(state.listCalls).toBe(0);
   expect(state.boardCalls).toBe(1);
   await expect(page.locator('#ticket-241')).toHaveCount(0);
+});
+
+
+test('autosave debounces text, saves on blur, and commits tags only when finished', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  const title = page.getByLabel('Ticket title');
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+  await title.fill('First wording');
+  await page.waitForTimeout(200);
+  expect(state.writes).toBe(0);
+  await title.fill('Final wording');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  expect(state.writes).toBe(1);
+  expect(state.items.find(i => i.id === '2')?.title).toBe('Final wording');
+  await expect(title).toBeFocused();
+  await page.getByLabel('Description', { exact: true }).fill('Saved on leaving the field');
+  await page.getByLabel('Add tag').fill('finished-tag');
+  await expect.poll(() => state.items.find(i => i.id === '2')?.description).toBe('Saved on leaving the field');
+  await page.waitForTimeout(650);
+  expect(state.items.find(i => i.id === '2')?.tags).not.toContain('finished-tag');
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(page.locator('.detail')).toHaveCount(0);
+  expect(state.items.find(i => i.id === '2')?.tags).toContain('finished-tag');
+});
+
+test('autosave queues edits during a slow request and waits before switching tickets', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => release = resolve);
+  state.beforeWrite = () => held;
+  // Exercise an acknowledgement arriving on the live stream before its HTTP response.
+  state.beforeReply = saved => state.notify('change', { items: [{ ...saved }] });
+  await page.locator('#ticket-2').click();
+  const title = page.getByLabel('Ticket title');
+  await title.fill('First in flight');
+  await expect.poll(() => state.writes).toBe(1);
+  await expect(title).toBeEnabled();
+  await expect(title).toBeFocused();
+  await title.fill('Latest title');
+  await page.getByLabel('Description', { exact: true }).fill('Typed during the request');
+  await page.getByLabel('Add tag').fill('queued-tag');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Next ticket', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Item 2', exact: true })).toBeVisible();
+  expect(state.writes).toBe(1);
+  release();
+  await expect(page.getByRole('complementary', { name: 'Item 9', exact: true })).toBeVisible();
+  expect(state.items.find(i => i.id === '2')).toMatchObject({ title: 'Latest title', description: 'Typed during the request', tags: ['frontend', 'queued-tag'], version: 3 });
+  expect(state.bodies.map(body => body.version)).toEqual([1, 2]);
+  await expect(page.getByText('Updated by someone else')).toHaveCount(0);
+});
+
+test('invalid titles and failed automatic saves keep the panel open until resolved', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  const title = page.getByLabel('Ticket title');
+  await title.fill('');
+  await page.waitForTimeout(600);
+  expect(state.writes).toBe(0);
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(title).toBeVisible();
+  await title.fill('   ');
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(page.getByText('Add a title to save', { exact: true })).toBeVisible();
+  expect(state.writes).toBe(0);
+  state.failWrites = true;
+  await title.fill('Preserved on failure');
+  await expect(page.getByText('Not saved', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await page.waitForTimeout(650);
+  expect(state.writes).toBe(1);
+  await expect(title).toHaveValue('Preserved on failure');
+  state.failWrites = false;
+  await page.getByRole('button', { name: 'Retry save', exact: true }).click();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await expect(page.locator('.detail')).toHaveCount(0);
+});
+
+test('a conflict before the stream update fetches the latest version for explicit reconciliation', async ({ page, context }) => {
+  const state = await mock(context); await signIn(page);
+  await page.locator('#ticket-2').click();
+  await expect(page.getByLabel('Ticket title')).toBeFocused();
+  const remote = state.items.find(i => i.id === '2')!;
+  remote.description = 'Remote description'; remote.version++;
+  await page.getByLabel('Ticket title').fill('My title');
+  await expect(page.getByText('Updated by someone else')).toBeVisible();
+  expect(state.writes).toBe(1);
+  await expect(page.getByLabel('Ticket title')).toHaveValue('My title');
+  await page.getByRole('button', { name: 'Keep my edits on latest', exact: true }).click();
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  expect(remote).toMatchObject({ title: 'My title', description: 'Remote description', version: 3 });
 });
