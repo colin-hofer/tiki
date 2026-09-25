@@ -13,7 +13,9 @@ function digest(paths) {
   function visit(path) {
     hash.update(path + '\0');
     if (!existsSync(path)) return;
-    for (const entry of readdirSync(path, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const entry of readdirSync(path, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
       const name = `${path}/${entry.name}`;
       if (entry.isDirectory()) visit(name);
       else hash.update(name + '\0').update(readFileSync(name));
@@ -23,9 +25,10 @@ function digest(paths) {
   return hash;
 }
 
-const inputs = digest(['frontend/src', 'frontend/public']);
+const inputs = digest(['frontend/src', 'frontend/public', 'frontend/tests']);
 for (const name of readdirSync('frontend').sort()) {
-  if (/\.(?:json|[cm]?js|ts|html|css)$/.test(name) || name === '.env' || name.startsWith('.env.')) inputs.update(name + '\0').update(readFileSync(`frontend/${name}`));
+  if (/\.(?:json|[cm]?js|ts|html|css)$/.test(name) || name === '.env' || name.startsWith('.env.'))
+    inputs.update(name + '\0').update(readFileSync(`frontend/${name}`));
 }
 inputs.update(readFileSync(fileURLToPath(import.meta.url))).update(process.version);
 for (const key of Object.keys(process.env).sort()) {
@@ -34,7 +37,11 @@ for (const key of Object.keys(process.env).sort()) {
 const key = inputs.digest('hex');
 const stamp = '.dev/frontend-build.json';
 const state = () => JSON.stringify([key, digest(['frontend/dist']).digest('hex')]);
-if (existsSync('frontend/dist/index.html') && existsSync(stamp) && readFileSync(stamp, 'utf8') === state()) {
+if (
+  existsSync('frontend/dist/index.html') &&
+  existsSync(stamp) &&
+  readFileSync(stamp, 'utf8') === state()
+) {
   console.log('Frontend unchanged.');
 } else {
   const result = spawnSync('npm', ['--prefix', 'frontend', 'run', 'build'], { stdio: 'inherit' });

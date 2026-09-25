@@ -16,7 +16,7 @@ make dev
 
 Open **http://127.0.0.1:5173**. The first run installs the locked frontend dependencies, builds the Go API, and asks you to choose a password for **dev@tiki.local**. Sign in with that account. Later runs reuse the database and account without prompting.
 
-Frontend edits hot-reload. Go and SQL edits rebuild and restart the API automatically; a compilation error leaves the previous API running until you fix it. Ctrl+C stops both servers. Development data persists in `.dev/tiki.db`, separate from the default `tiki.db`; nothing resets your database on startup. The dev API listens only on `127.0.0.1:8081`.
+Frontend edits hot-reload. Go and SQL edits rebuild and restart the API automatically; a compilation error leaves the previous API running until you fix it. Ctrl+C stops both servers. Development data persists in `.dev/tiki.db`, separate from the default `tiki.db`; nothing resets your database on startup. The dev API listens only on `127.0.0.1:8081`. CLI installer downloads are built separately with `make cli`; they do not delay dev startup.
 
 Optional overrides:
 
@@ -84,7 +84,7 @@ tiki auth login --email you@example.com
 
 The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Run the command again to upgrade. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
 
-`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` prepares the same downloads, which Vite serves through its existing API proxy. While the dev server is running, run `make cli` after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
+`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` builds only the local API; run `make cli` when testing installer downloads, which Vite serves through its existing API proxy. Run it again after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
 
 To install just the agent skill, including when the CLI is already installed:
 
@@ -192,7 +192,7 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | POST / GET | `/api/v1/items` | Create / list items. |
 | GET / PATCH | `/api/v1/items/{id}` | Read / edit an item. |
 | DELETE | `/api/v1/items/{id}` | Member/admin: permanently delete a ticket and its activity; JSON body `{"version":N}` required. Returns `{"deleted":true}`. |
-| POST | `/api/v1/items/{id}/move` | Move before/after another item. |
+| POST | `/api/v1/items/{id}/move` | Move before/after another item, optionally changing status atomically. |
 | GET | `/api/v1/items/{id}/activity` | Read durable activity. |
 | GET | `/api/v1/tags` | List tags; `usage=true` includes a `usage` map of names to ticket counts. |
 | DELETE | `/api/v1/tags` | Member/admin: delete a tag everywhere with `{"name":"tag-name"}`; returns `{"deleted":true,"removed_from":N}`. Tickets and history are kept, affected ticket versions increase, and live clients refresh. |
@@ -210,8 +210,10 @@ Edit and move bodies:
 ```
 
 ```json
-{"version":2,"before":"42"}
+{"version":2,"before":"42","status":"in_progress"}
 ```
+
+The move body accepts an optional `status`. When provided, status and priority commit together, with one version check and one activity record. The CLI exposes this as `tiki item move ID --before OTHER_ID --status in_progress`.
 
 `GET /api/v1/board` accepts the same `tag`, `status`, and `assignee` filters as the item list. Its `columns` object maps statuses to item pages from one SQLite read snapshot. Active statuses return up to 100 summaries each; backlog, complete, and void return up to 20 each. An explicit status filter returns up to 100 regardless of status. Summaries omit descriptions. Continue each column through `/items` using that column's `next_cursor` and the same filters. The board endpoint rejects `limit` and `cursor`; it also includes `users` and `tags` page objects (up to 200 entries each), whose `next_after` continues through the corresponding directory endpoint. This reduces a normal web session restore to three API requests: session, event stream, and board.
 
@@ -226,11 +228,13 @@ CLI exit codes: 0 success, 1 unexpected failure, 2 validation/flag errors, 3 not
 ## Development
 
 ```sh
-make check          # formatting, frontend checks/build, race tests, vet, bundled binary
+make check          # formatting, lint, frontend checks/build, race tests, browser tests, vet, bundled binary
+make format         # apply gofmt and oxfmt
+make lint           # strict oxlint checks for frontend and Node scripts
 make bench          # allocation and timing benchmarks at 10k and 100k items
 ```
 
-The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run with `npm --prefix frontend test`; see [frontend/README.md](frontend/README.md) for Chromium setup.
+The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run as part of `make check`, or separately with `make test-web`; see [frontend/README.md](frontend/README.md) for Chromium setup.
 
 Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, single-use and concurrent invite claims, role changes and removal, concurrent last-admin protection, persistent CLI server settings, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
 

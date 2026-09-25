@@ -19,37 +19,51 @@ Open `http://127.0.0.1:5173`. This installs dependencies when needed and starts 
 ```sh
 # From the repository root:
 make build           # frontend checks + Vite build + bundled CLI downloads + Go binary
-make check           # frontend build + Go race tests + vet + bundled binary
-npm --prefix frontend test
+make check           # format/lint + frontend checks/build + Go race tests + browser tests + vet + bundled binary
+make format          # apply gofmt and oxfmt
+make lint            # strict oxlint checks for frontend and Node scripts
+make test-web        # browser regressions and real Go API integration
 ```
 
 `npm run build` in this directory builds only the frontend. `make build` performs both builds in order. The resulting binary serves the UI at `/` alongside `/api/v1`, with revalidated HTML and immutable fingerprinted assets. It runs without Node or external frontend files. API-only development builds use `go build -tags dev .` and do not require `dist/`.
 
-Browser tests use isolated API fixtures and Vite's `test` mode, which never starts an API or initializes a database. Set `PLAYWRIGHT_PORT` to use an isolated test port alongside an existing development server. Install Chromium with `npx playwright install chromium`, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an existing executable. `npm run preview` previews a completed frontend build; point `TIKI_API_URL` at an existing API when using it.
+Oxfmt formats Svelte, TypeScript, JavaScript, CSS, and frontend configuration/docs using the root `.oxfmtrc.json`. Oxlint uses `.oxlintrc.jsonc`: correctness and suspicious rules are errors, with additional checks for unused code, explicit `any`, type imports, equality, and debug logging. Both run in `make check`; `make fmt` checks formatting without changing files. The equivalent npm commands are `format`, `format:check`, and `lint`. Generated output and the lockfile are excluded. Oxlint checks Svelte script blocks; strict `svelte-check` covers templates and types, including unused declarations, and fails on every warning. No separate ESLint or Prettier installation is needed.
+
+Browser tests run their own Vite server on port 5174 and a Go API on port 5175. The API uses a temporary database and a test-only account; both servers and the database are cleaned up afterwards. The interaction tests mock responses for controlled failures and races, while the integration test exercises the real API and event stream. Set `PLAYWRIGHT_PORT` to change the UI port (the API uses the next port). Tests never reuse a running development server. Install Chromium once with `cd frontend && npx playwright install chromium`, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an existing executable. CI installs Chromium and runs the same `make check` target. `npm run preview` previews a completed frontend build; point `TIKI_API_URL` at an existing API when using it.
+
+## State ownership
+
+- `App.svelte` owns authentication and preserves the workspace during session expiry.
+- `Workspace.svelte` coordinates URL state, commands, dialogs, and navigation that must finish pending edits.
+- `board.svelte.ts` owns server snapshots, live events, pagination, detail reads, and all ticket writes. Writes invalidate older reads; snapshot reconciliation never replaces a newer item with an older version. Failed writes are not retried automatically.
+- `Board.svelte` owns card focus, keyboard navigation, touch dragging, and board rendering. `Toolbar.svelte` owns search/filter controls.
+- `ItemEditor.svelte` owns the draft and its sequential autosave lifecycle. `item-edit.ts` computes patches and reapplies only edits made after a request or against a conflicted version. `ItemActivity.svelte` owns cancellable activity reads.
+
+Keep server synchronization out of view components and DOM operations out of the board state. New ticket mutations must use the board state's write boundary. There is no second cache or compatibility path.
 
 ## Interaction
 
 The board keeps one ticket in the Tab order; arrows move between tickets without tabbing through every card. Focus follows moved tickets and falls back to a visible card or column when filters hide them. Empty columns never keep a different column's ticket selected.
 
-| Motion | Keys |
-| --- | --- |
-| Previous / next ticket | ↑ / ↓ or K / J |
-| Previous / next column | ← / → or H / L |
-| First / last loaded ticket in column | Home / End or gg / G |
-| Jump to a visible column | 1–7 |
-| Open ticket | Enter |
-| Create in current column | C |
-| Edit title / description | E or I / D |
-| Assign / assign or unassign yourself | A / M |
-| Change status / tags / type | S / T / Y |
-| Reorder within column | Alt+↑/↓ or Shift+K/J |
-| Move to adjacent status | Alt+←/→ or Shift+H/L |
-| Search loaded tickets / focus first result | /, then Enter or ↓ |
-| Command palette / shortcut guide | Ctrl/Cmd+K / ? |
-| Refresh and apply current order | R |
-| Previous / next open ticket | [ / ] or K / J outside a field |
-| Switch board and details (or search) | F6 |
-| Save immediately / save and close | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
+| Motion                                     | Keys                                  |
+| ------------------------------------------ | ------------------------------------- |
+| Previous / next ticket                     | ↑ / ↓ or K / J                        |
+| Previous / next column                     | ← / → or H / L                        |
+| First / last loaded ticket in column       | Home / End or gg / G                  |
+| Jump to a visible column                   | 1–7                                   |
+| Open ticket                                | Enter                                 |
+| Create in current column                   | C                                     |
+| Edit title / description                   | E or I / D                            |
+| Assign / assign or unassign yourself       | A / M                                 |
+| Change status / tags / type                | S / T / Y                             |
+| Reorder within column                      | Alt+↑/↓ or Shift+K/J                  |
+| Move to adjacent status                    | Alt+←/→ or Shift+H/L                  |
+| Search loaded tickets / focus first result | /, then Enter or ↓                    |
+| Command palette / shortcut guide           | Ctrl/Cmd+K / ?                        |
+| Refresh and apply current order            | R                                     |
+| Previous / next open ticket                | [ / ] or K / J outside a field        |
+| Switch board and details (or search)       | F6                                    |
+| Save immediately / save and close          | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
 
 Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; closing or switching tickets finishes pending saves first. Invalid fields, failed saves, and conflicts keep the panel open until resolved. On narrow screens, Tab stays inside details and F6 finishes pending saves and returns to the board.
 
@@ -59,7 +73,7 @@ Inline creation uses Enter to add another ticket, Shift+Enter for a line break, 
 
 The item panel saves automatically: title and description changes save after 500 ms without typing or when leaving the field; status, type, assignment, and committed tags save immediately. Fields remain editable during requests, with later changes sent sequentially against the acknowledged version. The footer shows saving and saved state. Errors stop automatic retries and retain the draft with **Retry save** and **Discard unsaved changes** actions. Conflicts require explicit reconciliation before autosave resumes. Ctrl/Cmd+Enter still saves immediately.
 
-Drag above or below a card to reorder, including across statuses; dropping on a column changes status. Cross-column card drops use a status update followed by a priority move and report a partial failure if only the first succeeds. Ordering uses the API's workspace-wide before/after semantics.
+Drag above or below a card to reorder, including across statuses; dropping on a column changes status. Cross-column card drops use one move request that commits status and priority in the same transaction, with one version check and one item activity record. Ordering uses the API's workspace-wide before/after semantics.
 
 One `/api/v1/board` request loads the initial tickets, users, and tags. Active columns start with up to 100 tickets each; backlog, complete, and void start with 20 each. Selecting a status explicitly raises its preview to 100. Each column retains an explicit Load more control. A normal session restore uses three API requests: `/auth/me`, `/events`, and `/board`; directories larger than 200 entries and a directly opened ticket need additional requests. Text filtering, first/last jumps, and next/previous details cover loaded items only. Tag and assignee filtering use the API. Filters and open items are URL state; conflicts preserve drafts and offer explicit reconciliation.
 
@@ -67,13 +81,12 @@ One `/api/v1/board` request loads the initial tickets, users, and tags. Active c
 
 The browser keeps one authenticated SSE connection to `/api/v1/events`. Each committed change pushes the current ticket, including its version and description. The UI merges newer versions into existing cards and open details without refetching them, preserves keyboard focus, and keeps unsaved drafts separate. Ordinary saves use the HTTP response the same way; duplicate stream delivery is harmless. Priority changes preserve the visible order until you choose **Apply order**.
 
-There is no periodic list polling. Idle connections receive a small heartbeat every 15 seconds. Notifications are coalesced for 100 ms. A membership or priority change inside a partially loaded column refreshes only that column, preserving its cards while the response is pending. Edits beyond its loaded boundary do not trigger a refetch. Initial connections, reconnects, global priority rebalances, and oversized update bursts request a fresh snapshot. Reconnects back off; hidden tabs disconnect and resync when shown. Expired/revoked sessions return to sign-in while preserving the draft.
+There is no periodic list polling. Idle connections receive a small heartbeat every 15 seconds. Notifications are coalesced for 100 ms. A membership or priority change inside a partially loaded column refreshes only that column, preserving its cards while the response is pending. Edits beyond its loaded boundary do not trigger a refetch. Initial connections, reconnects, global priority rebalances, and oversized update bursts request a fresh snapshot. If the event stream is unavailable, an initial snapshot still loads and ordinary reads/writes remain available. Reconnects back off and resync; hidden tabs disconnect and resync when shown. Expired/revoked sessions return to sign-in while preserving the draft.
 
 Authentication currently uses the existing bearer-token API. The session token is kept in tab-scoped `sessionStorage` (memory only if storage is unavailable). No password is persisted. HttpOnly browser cookies and CSRF protection require backend support; the frontend does not invent a separate authentication contract.
-
 
 Admins can create single-use invite links through **Manage people** in the toolbar or command menu, then **Invite people**. The link opens a join form where recipients choose their name, email, and password; successful claims sign them in and remove the invite fragment from browser history. An expired, used, or revoked link cannot create another account. Links created in development use Vite's browser address, which proxies the public invite API just like other requests.
 
 The People dialog also supports searching the directory, changing roles, and removing access. Removal requires confirmation in the dialog and retains identity for ticket history. Removed users cannot receive new assignments; use a new invite to restore access. Changes arrive through the existing live directory updates. Members and viewers cannot access management controls, and the server enforces the same permissions.
 
-**CLI & agents** is available to every signed-in user in the toolbar, and as **Install CLI & agent skill** in the command menu. Its keyboard-accessible tabs separate CLI installation/sign-in from the Codex skill. Copyable commands use the current browser origin; sign-in includes the user's email and an explicit server. They never copy the browser's session token. The skill is served by the same workspace, can be read before installation, and remains available when CLI downloads are missing. Clipboard failures leave selectable commands visible. `make dev` builds CLI downloads once; use `make cli` to refresh them after CLI changes without restarting Vite. Edits to `skills/tiki/SKILL.md` rebuild the development API automatically.
+**CLI & agents** is available to every signed-in user in the toolbar, and as **Install CLI & agent skill** in the command menu. Its keyboard-accessible tabs separate CLI installation/sign-in from the Codex skill. Copyable commands use the current browser origin; sign-in includes the user's email and an explicit server. They never copy the browser's session token. The skill is served by the same workspace, can be read before installation, and remains available when CLI downloads are missing. Clipboard failures leave selectable commands visible. `make dev` builds only the local API; run `make cli` explicitly to build or refresh installer downloads without restarting Vite. Edits to `skills/tiki/SKILL.md` rebuild the development API automatically.

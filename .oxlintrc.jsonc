@@ -1,0 +1,47 @@
+{
+  "$schema": "./frontend/node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+  },
+  "rules": {
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-var": "error",
+    "prefer-const": "error",
+    "no-debugger": "error",
+    "no-console": "error",
+    "no-eval": "error",
+    "no-new-func": "error",
+    "no-shadow": ["error", { "ignoreOnInitialization": true }],
+    "no-unused-vars": ["error", { "ignoreRestSiblings": true }],
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": "error",
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
+    // Sorting a locally owned array is intentional; immutable arrays are not a project rule.
+    "unicorn/no-array-sort": "off",
+    // Keep helpers next to their callers, including inside Svelte lifecycle callbacks.
+    "unicorn/consistent-function-scoping": "off",
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "frontend/dist/**",
+    "frontend/test-results/**",
+    "frontend/playwright-report/**",
+  ],
+  "overrides": [
+    {
+      "files": ["frontend/*.ts", "frontend/tests/**", "scripts/**"],
+      "env": { "node": true },
+      "rules": { "no-console": "off" },
+    },
+    {
+      "files": ["frontend/src/**"],
+      "env": { "browser": true },
+    },
+    {
+      "files": ["**/*.mjs"],
+      "rules": { "no-undef": "error" },
+    },
+  ],
+}

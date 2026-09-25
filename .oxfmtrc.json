@@ -1,0 +1,12 @@
+{
+  "$schema": "./frontend/node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "svelte": true,
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "frontend/dist/**",
+    "frontend/test-results/**",
+    "frontend/playwright-report/**",
+    "frontend/package-lock.json"
+  ]
+}

@@ -128,9 +128,10 @@ type UpdateItem struct {
 }
 
 type MoveItem struct {
-	Version int64 `json:"version"`
-	Before  ID    `json:"before,omitempty"`
-	After   ID    `json:"after,omitempty"`
+	Version int64   `json:"version"`
+	Before  ID      `json:"before,omitempty"`
+	After   ID      `json:"after,omitempty"`
+	Status  *Status `json:"status,omitempty"`
 }
 
 type Filter struct {

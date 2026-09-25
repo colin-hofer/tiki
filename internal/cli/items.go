@@ -231,11 +231,12 @@ func (a *app) updateItem() *cobra.Command {
 }
 
 func (a *app) moveItem() *cobra.Command {
-	var before, after string
+	var before, after, status string
 	var version int64
 	c := &cobra.Command{Use: "move ID", Short: "Move before or after another item in workspace priority order", Args: cobra.ExactArgs(1)}
 	c.Flags().StringVar(&before, "before", "", "Place immediately before this item ID")
 	c.Flags().StringVar(&after, "after", "", "Place immediately after this item ID")
+	c.Flags().StringVar(&status, "status", "", "Change status in the same operation")
 	c.Flags().Int64Var(&version, "if-version", 0, "Expected version; otherwise fetch immediately before moving")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := tiki.ParseID(args[0])
@@ -246,6 +247,10 @@ func (a *app) moveItem() *cobra.Command {
 			return &tiki.Error{Code: "validation", Message: "specify exactly one of --before or --after"}
 		}
 		in := tiki.MoveItem{}
+		if cmd.Flags().Changed("status") {
+			value := tiki.Status(status)
+			in.Status = &value
+		}
 		if before != "" {
 			in.Before, err = tiki.ParseID(before)
 		} else {

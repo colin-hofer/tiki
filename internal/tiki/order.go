@@ -48,6 +48,9 @@ func (s *Store) Move(ctx context.Context, actor, id ID, in MoveItem) (Item, erro
 	if in.Version <= 0 {
 		return out, invalid("positive expected version required")
 	}
+	if in.Status != nil && !validStatus(*in.Status) {
+		return out, invalid("unknown status")
+	}
 	if (in.Before == 0) == (in.After == 0) || in.Before < 0 || in.After < 0 {
 		return out, invalid("specify exactly one of before or after")
 	}
@@ -107,7 +110,7 @@ func (s *Store) Move(ctx context.Context, actor, id ID, in MoveItem) (Item, erro
 				valid = rank > low && rank < high
 			}
 			if valid && !math.IsNaN(rank) && !math.IsInf(rank, 0) {
-				_, err = tx.ExecContext(ctx, "UPDATE items SET priority=?,version=version+1,updated_at=? WHERE id=?", rank, now(), id)
+				_, err = tx.ExecContext(ctx, "UPDATE items SET priority=?,status=coalesce(?,status),version=version+1,updated_at=? WHERE id=?", rank, in.Status, now(), id)
 				if err != nil {
 					return err
 				}

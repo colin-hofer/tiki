@@ -14,23 +14,38 @@
   let confirmation = $state('');
 
   async function inspect() {
-    checking = true; error = '';
-    try { invite = await api('/auth/invite', 'POST', { token }); }
-    catch (e) { error = e instanceof Error ? e.message : 'Could not check this invite. Please try again.'; }
-    finally { checking = false; }
+    checking = true;
+    error = '';
+    try {
+      invite = await api('/auth/invite', 'POST', { token });
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not check this invite. Please try again.';
+    } finally {
+      checking = false;
+    }
   }
-  onMount(() => { void inspect(); });
+  onMount(() => {
+    void inspect();
+  });
 
   async function join(event: SubmitEvent) {
-    event.preventDefault(); error = '';
-    if (password !== confirmation) { error = 'Passwords do not match.'; return; }
+    event.preventDefault();
+    error = '';
+    if (password !== confirmation) {
+      error = 'Passwords do not match.';
+      return;
+    }
     busy = true;
     try {
       const session = await api<Session>('/auth/join', 'POST', { token, name, email, password });
-      password = ''; confirmation = '';
+      password = '';
+      confirmation = '';
       await onjoin(session);
-    } catch (e) { error = e instanceof Error ? e.message : 'Could not create your account. Please try again.'; }
-    finally { busy = false; }
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Could not create your account. Please try again.';
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -41,14 +56,60 @@
     {#if checking}<p role="status">Checking your invite…</p>{/if}
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}
     {#if invite}
-      <p class="hint">{label(invite.role)} access · Expires {new Date(invite.expires_at * 1000).toLocaleDateString()}</p>
-      <label>Name<input autocomplete="name" required maxlength="200" bind:value={name} disabled={busy} /></label>
-      <label>Email<input type="email" autocomplete="username" required maxlength="254" bind:value={email} disabled={busy} /></label>
-      <label>Password<input type="password" autocomplete="new-password" aria-describedby="password-hint" required minlength="8" maxlength="1024" bind:value={password} disabled={busy} /></label>
+      <p class="hint">
+        {label(invite.role)} access · Expires {new Date(
+          invite.expires_at * 1000,
+        ).toLocaleDateString()}
+      </p>
+      <label
+        >Name<input
+          autocomplete="name"
+          required
+          maxlength="200"
+          bind:value={name}
+          disabled={busy}
+        /></label
+      >
+      <label
+        >Email<input
+          type="email"
+          autocomplete="username"
+          required
+          maxlength="254"
+          bind:value={email}
+          disabled={busy}
+        /></label
+      >
+      <label
+        >Password<input
+          type="password"
+          autocomplete="new-password"
+          aria-describedby="password-hint"
+          required
+          minlength="8"
+          maxlength="1024"
+          bind:value={password}
+          disabled={busy}
+        /></label
+      >
       <span id="password-hint" class="hint">At least 8 characters</span>
-      <label>Confirm password<input type="password" autocomplete="new-password" required minlength="8" maxlength="1024" bind:value={confirmation} disabled={busy} /></label>
-      <button class="primary-button" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
-    {:else if !checking}<button type="button" class="small-button" onclick={inspect}>Check invite again</button>{/if}
+      <label
+        >Confirm password<input
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="8"
+          maxlength="1024"
+          bind:value={confirmation}
+          disabled={busy}
+        /></label
+      >
+      <button class="primary-button" disabled={busy}
+        >{busy ? 'Creating account…' : 'Create account'}</button
+      >
+    {:else if !checking}<button type="button" class="small-button" onclick={inspect}
+        >Check invite again</button
+      >{/if}
     <a href="/" class="hint">Already have an account? Sign in</a>
   </form>
 </div>

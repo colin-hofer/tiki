@@ -53,12 +53,12 @@ func TestCLIThroughHTTP(t *testing.T) {
 	if err = json.Unmarshal([]byte(invoke(0, "item", "create", "--title", "Second")), &second); err != nil {
 		t.Fatal(err)
 	}
-	invoke(0, "item", "move", second.ID.String(), "--before", first.ID.String(), "--if-version", "1")
+	invoke(0, "item", "move", second.ID.String(), "--before", first.ID.String(), "--status", "todo", "--if-version", "1")
 	var page tiki.Page
 	if err = json.Unmarshal([]byte(invoke(0, "item", "list")), &page); err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 2 || page.Items[0].ID != second.ID {
+	if len(page.Items) != 2 || page.Items[0].ID != second.ID || page.Items[0].Status != tiki.StatusTodo || page.Items[0].Version != 2 {
 		t.Fatalf("move not reflected: %+v", page)
 	}
 	invoke(0, "item", "update", first.ID.String(), "--remove-assignee", "1", "--status", "in_progress", "--if-version", "1")
