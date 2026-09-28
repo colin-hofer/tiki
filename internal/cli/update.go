@@ -164,8 +164,7 @@ func downloadUpdate(ctx context.Context, url string, limit int64) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
+	response, err := httpClient.Do(req)
 	if err != nil {
 		return nil, &tiki.Error{Code: "transport", Message: "cannot download CLI update: " + err.Error()}
 	}

@@ -12,7 +12,7 @@ func (s *Store) Board(ctx context.Context, f Filter) (map[Status]Page, error) {
 	if f.Cursor != "" || f.Limit != 0 {
 		return nil, invalid("board pagination uses the item list endpoint")
 	}
-	if f.Status != "" && !validStatus(f.Status) {
+	if f.Status != "" && !f.Status.Valid() {
 		return nil, invalid("unknown status")
 	}
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})

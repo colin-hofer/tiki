@@ -71,3 +71,8 @@ func TestDeleteTagRemovesAllMembershipsWithHistoryAndVersions(t *testing.T) {
 	_, err = s.DeleteTag(ctx, admin.ID, "unused")
 	requireCode(t, err, "not_found")
 }
+
+func TestTagsRejectInvalidUTF8BeforeNormalization(t *testing.T) {
+	_, err := cleanTags([]string{"UPPER\xff"})
+	requireCode(t, err, "validation")
+}

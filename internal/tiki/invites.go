@@ -7,16 +7,18 @@ import (
 	"time"
 )
 
+// Invite is an expiring, single-use invitation. Timestamps are Unix seconds.
 type Invite struct {
-	ID        ID     `json:"id"`
-	Role      string `json:"role"`
-	CreatedBy ID     `json:"created_by"`
-	CreatedAt int64  `json:"created_at"`
-	ExpiresAt int64  `json:"expires_at"`
+	ID        ID    `json:"id"`
+	Role      Role  `json:"role"`
+	CreatedBy ID    `json:"created_by"`
+	CreatedAt int64 `json:"created_at"`
+	ExpiresAt int64 `json:"expires_at"`
 	// Token is returned only when creating a link; only its hash is stored.
 	Token string `json:"token,omitempty"`
 }
 
+// InvitePage lists active invites without exposing their tokens.
 type InvitePage struct {
 	Invites   []Invite `json:"invites"`
 	NextAfter ID       `json:"next_after,omitempty"`
@@ -26,11 +28,13 @@ func invalidInvite() error {
 	return &Error{Code: "not_found", Message: "this invite is invalid, expired, or already used; ask for a new link"}
 }
 
-func (s *Store) CreateInvite(ctx context.Context, actor ID, role string, lifetime time.Duration) (Invite, error) {
+// CreateInvite issues a single-use link for an active administrator.
+// An empty role defaults to member; lifetime must be one minute through 30 days.
+func (s *Store) CreateInvite(ctx context.Context, actor ID, role Role, lifetime time.Duration) (Invite, error) {
 	if role == "" {
-		role = "member"
+		role = RoleMember
 	}
-	if role != "admin" && role != "member" && role != "viewer" {
+	if !role.Valid() {
 		return Invite{}, invalid("role must be admin, member, or viewer")
 	}
 	if lifetime < time.Minute || lifetime > 30*24*time.Hour {
@@ -51,17 +55,13 @@ func (s *Store) CreateInvite(ctx context.Context, actor ID, role string, lifetim
 		if _, err := tx.ExecContext(ctx, "DELETE FROM invites WHERE expires_at<=?", now.Unix()); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, "INSERT INTO invites(hash,role,created_by,created_at,expires_at) VALUES(?,?,?,?,?)", hashSession(invite.Token), role, actor, invite.CreatedAt, invite.ExpiresAt)
-		if err != nil {
-			return err
-		}
-		id, err := result.LastInsertId()
-		invite.ID = ID(id)
-		return err
+		return tx.QueryRowContext(ctx, `INSERT INTO invites(hash,role,created_by,created_at,expires_at)
+			VALUES(?,?,?,?,?) RETURNING id`, hashSession(invite.Token), role, actor, invite.CreatedAt, invite.ExpiresAt).Scan(&invite.ID)
 	})
 	return invite, err
 }
 
+// Invite looks up an active link without returning its secret.
 func (s *Store) Invite(ctx context.Context, token string) (Invite, error) {
 	var invite Invite
 	if len(token) != 43 {
@@ -112,6 +112,7 @@ func (s *Store) ClaimInvite(ctx context.Context, token, name, email, password st
 	return session, nil
 }
 
+// RevokeInvite invalidates a link. Revoking an absent link is harmless.
 func (s *Store) RevokeInvite(ctx context.Context, id ID) error {
 	return s.transaction(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "DELETE FROM invites WHERE id=?", id)
@@ -119,6 +120,7 @@ func (s *Store) RevokeInvite(ctx context.Context, id ID) error {
 	})
 }
 
+// Invites lists unclaimed, unexpired links in ascending ID order.
 func (s *Store) Invites(ctx context.Context, after ID, limit int) (InvitePage, error) {
 	out := InvitePage{Invites: []Invite{}}
 	if after < 0 || limit < 1 || limit > MaxPageSize {

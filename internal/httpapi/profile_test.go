@@ -14,7 +14,7 @@ func TestProfileUpdatesOnlyAuthenticatedUsersName(t *testing.T) {
 	h := Handler(s)
 	for _, role := range []string{"viewer", "member", "admin"} {
 		t.Run(role, func(t *testing.T) {
-			person, err := s.CreateUser(t.Context(), "Original", role+"@profile.test", role, testPassword)
+			person, err := s.CreateUser(t.Context(), "Original", role+"@profile.test", tiki.Role(role), testPassword)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,7 +43,7 @@ func TestProfileUpdatesOnlyAuthenticatedUsersName(t *testing.T) {
 			}
 			w := request(session.Token, `{"name":"  New Name  "}`, 200)
 			var updated tiki.User
-			if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil || updated.ID != person.ID || updated.Name != "New Name" || updated.Role != role || updated.Email != person.Email {
+			if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil || updated.ID != person.ID || updated.Name != "New Name" || updated.Role != tiki.Role(role) || updated.Email != person.Email {
 				t.Fatalf("unexpected profile: %+v: %v", updated, err)
 			}
 			current, err := s.Authenticate(t.Context(), session.Token)

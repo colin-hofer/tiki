@@ -43,12 +43,13 @@ func appendPriority(ctx context.Context, tx *sql.Tx, actor ID) (float64, error) 
 	return 0, invalid("cannot allocate a finite priority")
 }
 
+// Move changes relative priority and optional status in one version-checked edit.
 func (s *Store) Move(ctx context.Context, actor, id ID, in MoveItem) (Item, error) {
 	var out Item
 	if in.Version <= 0 {
 		return out, invalid("positive expected version required")
 	}
-	if in.Status != nil && !validStatus(*in.Status) {
+	if in.Status != nil && !in.Status.Valid() {
 		return out, invalid("unknown status")
 	}
 	if (in.Before == 0) == (in.After == 0) || in.Before < 0 || in.After < 0 {
@@ -62,16 +63,8 @@ func (s *Store) Move(ctx context.Context, actor, id ID, in MoveItem) (Item, erro
 		return out, invalid("cannot move an item relative to itself")
 	}
 	err := s.transaction(ctx, func(tx *sql.Tx) error {
-		var version int64
-		err := tx.QueryRowContext(ctx, "SELECT version FROM items WHERE id=?", id).Scan(&version)
-		if errors.Is(err, sql.ErrNoRows) {
-			return missing()
-		}
-		if err != nil {
+		if err := checkItemVersion(ctx, tx, id, in.Version); err != nil {
 			return err
-		}
-		if version != in.Version {
-			return conflict(version)
 		}
 		for range 2 {
 			var anchor float64
@@ -118,7 +111,7 @@ func (s *Store) Move(ctx context.Context, actor, id ID, in MoveItem) (Item, erro
 				if err != nil {
 					return err
 				}
-				return event(ctx, tx, actor, id, "item.moved", map[string]any{"move": in, "priority": rank, "version": out.Version})
+				return event(ctx, tx, actor, &id, "item.moved", map[string]any{"move": in, "priority": rank, "version": out.Version})
 			}
 			if err = rebalance(ctx, tx, actor); err != nil {
 				return err

@@ -11,7 +11,7 @@ import (
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-func event(ctx context.Context, tx *sql.Tx, actor ID, itemID any, kind string, data any) error {
+func event(ctx context.Context, tx *sql.Tx, actor ID, itemID *ID, kind string, data any) error {
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func editEvent(ctx context.Context, tx *sql.Tx, actor, item ID, in UpdateItem, v
 	}
 	// Keep a fresh, increasing ID for SSE and after-cursor catch-up. group_id
 	// identifies the visible entry across replacements, including missed saves.
-	if err := event(ctx, tx, actor, item, "item.updated", data); err != nil {
+	if err := event(ctx, tx, actor, &item, "item.updated", data); err != nil {
 		return err
 	}
 	if replaced != 0 {
@@ -83,7 +83,7 @@ func editEvent(ctx context.Context, tx *sql.Tx, actor, item ID, in UpdateItem, v
 
 const activityColumns = "id,item_id,actor_id,kind,created_at,data,coalesce(client_id,'')"
 
-func scanActivity(row interface{ Scan(...any) error }) (Activity, error) {
+func scanActivity(row scanner) (Activity, error) {
 	var event Activity
 	var data string
 	err := row.Scan(&event.ID, &event.ItemID, &event.ActorID, &event.Kind, &event.CreatedAt, &data, &event.ClientID)
@@ -91,7 +91,7 @@ func scanActivity(row interface{ Scan(...any) error }) (Activity, error) {
 	return event, err
 }
 
-// Default to the newest history page. An explicit after cursor reads forward;
+// Activity defaults to the newest history page. An explicit after cursor reads forward;
 // before loads older history. Both return chronological events with one ID space.
 func (s *Store) Activity(ctx context.Context, item, before ID, after *ID, limit int) (ActivityPage, error) {
 	out := ActivityPage{Activity: []Activity{}}

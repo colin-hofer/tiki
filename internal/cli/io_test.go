@@ -103,3 +103,37 @@ func TestClientAcceptsMaximumMembershipPage(t *testing.T) {
 		t.Fatal("truncated valid item page")
 	}
 }
+
+func TestClientPreservesNumbersAndValidatesErrorBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		code       string
+	}{
+		{"precise integer", `{"version":9007199254740993}`, 200, ""},
+		{"valid error", `{"error":{"code":"conflict","message":"changed"}}`, 409, "conflict"},
+		{"extra error value", `{"error":{"code":"conflict","message":"changed"}} {}`, 409, "transport"},
+		{"oversized error", `{"error":{"code":"conflict","message":"changed"}}` + strings.Repeat(" ", maxResponseBytes), 409, "transport"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			var output bytes.Buffer
+			a := app{server: server.URL, timeout: time.Second, json: true, out: &output}
+			err := printResponse[any](&a, t.Context(), "POST", "/api/v1/auth/login", nil)
+			if tc.code == "" {
+				if err != nil || strings.TrimSpace(output.String()) != tc.body {
+					t.Fatalf("lost precision: %s, %v", &output, err)
+				}
+			} else {
+				var api *tiki.Error
+				if !errors.As(err, &api) || api.Code != tc.code || output.Len() != 0 {
+					t.Fatalf("unexpected error/output: %v, %s", err, &output)
+				}
+			}
+		})
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"tiki/internal/tiki"
 )
 
 func TestHTTPInputAndReadiness(t *testing.T) {
@@ -35,6 +37,8 @@ func TestHTTPInputAndReadiness(t *testing.T) {
 		name, body, contentType string
 		status                  int
 	}{
+		{"null", `null`, "application/json", 400},
+		{"array", `[]`, "application/json", 400},
 		{"unknown field", `{"title":"x","unknown":true}`, "application/json", 400},
 		{"extra value", `{"title":"x"} {}`, "application/json", 400},
 		{"wrong type", `{"title":"x"}`, "text/plain", 415},
@@ -77,5 +81,33 @@ func TestDeadlineErrorIsNotInternalFailure(t *testing.T) {
 	writeError(w, context.DeadlineExceeded)
 	if w.Code != http.StatusGatewayTimeout || !strings.Contains(w.Body.String(), `"code":"timeout"`) {
 		t.Fatalf("%d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestPaginationLimitsAreConsistent(t *testing.T) {
+	s, admin := fixture(t)
+	item, err := s.Create(t.Context(), admin.ID, tiki.CreateItem{Title: "Page"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.Login(t.Context(), admin.Email, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler(s)
+	for _, path := range []string{"/items", "/users", "/tags", "/invites", "/items/" + item.ID.String() + "/activity"} {
+		for _, query := range []string{"", "?limit=1", "?limit=", "?limit=0", "?limit=-1", "?limit=201", "?limit=abc"} {
+			r := httptest.NewRequest("GET", "/api/v1"+path+query, nil)
+			r.Header.Set("Authorization", "Bearer "+session.Token)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			want := 400
+			if query == "" || query == "?limit=1" {
+				want = 200
+			}
+			if w.Code != want {
+				t.Errorf("%s%s: got %d, want %d: %s", path, query, w.Code, want, w.Body.String())
+			}
+		}
 	}
 }

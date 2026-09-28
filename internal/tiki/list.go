@@ -19,6 +19,7 @@ type cursor struct {
 	Filter     string  `json:"f"`
 }
 
+// List reads a bounded page and its ordering generation from one snapshot.
 func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -36,7 +37,7 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	if f.Limit < 1 || f.Limit > MaxPageSize {
 		return out, invalid("limit must be between 1 and 200")
 	}
-	if f.Status != "" && !validStatus(f.Status) {
+	if f.Status != "" && !f.Status.Valid() {
 		return out, invalid("unknown status")
 	}
 	if f.Assignee < 0 || (f.Assignee != 0 && f.Unassigned) {
@@ -78,7 +79,7 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	if f.Cursor != "" && c.Generation != generation {
 		return out, &Error{Code: "cursor_expired", Message: "priorities were rebalanced; restart pagination"}
 	}
-	where, args := []string{"1=1"}, []any{}
+	where, args := []string{"1=1"}, []any{previewSource}
 	if f.Status != "" {
 		where = append(where, "i.status=?")
 		args = append(args, f.Status)
@@ -103,7 +104,7 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		where = append(where, "(i.priority,i.id)>(?,?)")
 		args = append(args, c.Priority, c.ID)
 	}
-	args = append([]any{previewSource}, append(args, f.Limit+1)...)
+	args = append(args, f.Limit+1)
 	rows, err := tx.QueryContext(ctx, "SELECT "+itemColumns+",substr(i.description,1,?) FROM items i WHERE "+strings.Join(where, " AND ")+" ORDER BY i.priority,i.id LIMIT ?", args...)
 	if err != nil {
 		return out, err
@@ -131,38 +132,4 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		out.NextCursor = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return out, nil
-}
-
-func (s *Store) Tags(ctx context.Context, after string, limit int, includeUsage bool) (TagPage, error) {
-	out := TagPage{Tags: []string{}}
-	if limit < 1 || limit > MaxPageSize {
-		return out, invalid("limit must be between 1 and 200")
-	}
-	countColumn := "0"
-	if includeUsage {
-		countColumn = "(SELECT count(*) FROM item_tags WHERE tag_id=t.id)"
-		out.Usage = make(map[string]int64)
-	}
-	rows, err := s.read.QueryContext(ctx, "SELECT name,"+countColumn+" FROM tags t WHERE name>? ORDER BY name LIMIT ?", after, limit+1)
-	if err != nil {
-		return out, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var name string
-		var count int64
-		if err := rows.Scan(&name, &count); err != nil {
-			return out, err
-		}
-		if len(out.Tags) == limit {
-			out.NextAfter = out.Tags[len(out.Tags)-1]
-			break
-		}
-		out.Tags = append(out.Tags, name)
-		if includeUsage {
-			out.Usage[name] = count
-		}
-	}
-	return out, rows.Err()
 }

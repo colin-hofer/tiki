@@ -30,6 +30,7 @@ func TestInviteHTTPPermissionsAndClaim(t *testing.T) {
 		return w
 	}
 	request("POST", "/invites", "", `{}`, 401)
+	request("POST", "/invites", adminSession.Token, `null`, 400)
 	request("POST", "/invites", adminSession.Token, `{"expires_in":9223372036854775807}`, 400)
 	w := request("POST", "/invites", adminSession.Token, `{"role":"viewer"}`, 200)
 	var invite tiki.Invite

@@ -52,3 +52,38 @@ func (s *Store) DeleteTag(ctx context.Context, actor ID, name string) (int64, er
 	})
 	return count, err
 }
+
+// Tags lists normalized tag names in lexical order, including unused tags.
+func (s *Store) Tags(ctx context.Context, after string, limit int, includeUsage bool) (TagPage, error) {
+	out := TagPage{Tags: []string{}}
+	if limit < 1 || limit > MaxPageSize {
+		return out, invalid("limit must be between 1 and 200")
+	}
+	countColumn := "0"
+	if includeUsage {
+		countColumn = "(SELECT count(*) FROM item_tags WHERE tag_id=t.id)"
+		out.Usage = make(map[string]int64)
+	}
+	rows, err := s.read.QueryContext(ctx, "SELECT name,"+countColumn+" FROM tags t WHERE name>? ORDER BY name LIMIT ?", after, limit+1)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var count int64
+		if err := rows.Scan(&name, &count); err != nil {
+			return out, err
+		}
+		if len(out.Tags) == limit {
+			out.NextAfter = out.Tags[len(out.Tags)-1]
+			break
+		}
+		out.Tags = append(out.Tags, name)
+		if includeUsage {
+			out.Usage[name] = count
+		}
+	}
+	return out, rows.Err()
+}

@@ -1,3 +1,4 @@
+// Package cli implements the Tiki command line and server lifecycle.
 package cli
 
 import (
@@ -26,6 +27,8 @@ type app struct {
 	commentClientID string
 }
 
+// Run executes a command and returns a stable process exit code.
+// Normal output goes to stdout; diagnostics and JSON errors go to stderr.
 func Run(args []string, stdout, stderr io.Writer) int {
 	return run(args, os.Stdin, stdout, stderr)
 }

@@ -69,11 +69,7 @@ func (a *app) itemCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var out tiki.Item
-		if err = a.request(cmd.Context(), "GET", "/api/v1/items/"+id.String(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Item](a, cmd.Context(), "GET", "/api/v1/items/"+id.String(), nil)
 	}
 	var after string
 	var limit int
@@ -86,11 +82,7 @@ func (a *app) itemCommand() *cobra.Command {
 			return err
 		}
 		q := url.Values{"after": {after}, "limit": {strconv.Itoa(limit)}}
-		var out any
-		if err = a.request(cmd.Context(), "GET", "/api/v1/items/"+id.String()+"/activity?"+q.Encode(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.ActivityPage](a, cmd.Context(), "GET", "/api/v1/items/"+id.String()+"/activity?"+q.Encode(), nil)
 	}
 	root.AddCommand(get, activity)
 	return root
@@ -127,11 +119,7 @@ func (a *app) commentItem() *cobra.Command {
 		// committed the comment even if the caller never receives its response.
 		a.commentClientID = clientID
 		in := tiki.CreateComment{Body: body, ClientID: clientID}
-		var out tiki.Activity
-		if err := a.request(cmd.Context(), "POST", "/api/v1/items/"+id.String()+"/comments", in, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Activity](a, cmd.Context(), "POST", "/api/v1/items/"+id.String()+"/comments", in)
 	}
 	return c
 }
@@ -163,15 +151,11 @@ func (a *app) createItem() *cobra.Command {
 				return err
 			}
 		}
-		in := tiki.CreateItem{Title: title, Description: description, URL: link, Type: tiki.Type(typ), Status: tiki.Status(status), Tags: tags, Assignees: assigned}
+		in := tiki.CreateItem{Title: title, Description: description, URL: link, Type: tiki.ItemType(typ), Status: tiki.Status(status), Tags: tags, Assignees: assigned}
 		if cmd.Flags().Changed("priority") {
 			in.Priority = &priority
 		}
-		var out tiki.Item
-		if err = a.request(cmd.Context(), "POST", "/api/v1/items", in, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Item](a, cmd.Context(), "POST", "/api/v1/items", in)
 	}
 	return c
 }
@@ -211,11 +195,7 @@ func (a *app) listItems() *cobra.Command {
 		if cursor != "" {
 			q.Set("cursor", cursor)
 		}
-		var out tiki.Page
-		if err := a.request(cmd.Context(), "GET", "/api/v1/items?"+q.Encode(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Page](a, cmd.Context(), "GET", "/api/v1/items?"+q.Encode(), nil)
 	}
 	return c
 }
@@ -280,7 +260,7 @@ func (a *app) updateItem() *cobra.Command {
 			in.URL = &link
 		}
 		if f.Changed("type") {
-			v := tiki.Type(typ)
+			v := tiki.ItemType(typ)
 			in.Type = &v
 		}
 		if f.Changed("status") {
@@ -294,11 +274,7 @@ func (a *app) updateItem() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var out tiki.Item
-		if err = a.request(cmd.Context(), "PATCH", "/api/v1/items/"+id.String(), in, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Item](a, cmd.Context(), "PATCH", "/api/v1/items/"+id.String(), in)
 	}
 	return c
 }
@@ -336,11 +312,7 @@ func (a *app) moveItem() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var out tiki.Item
-		if err = a.request(cmd.Context(), "POST", "/api/v1/items/"+id.String()+"/move", in, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.Item](a, cmd.Context(), "POST", "/api/v1/items/"+id.String()+"/move", in)
 	}
 	return c
 }

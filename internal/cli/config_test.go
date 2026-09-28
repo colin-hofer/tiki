@@ -62,3 +62,26 @@ func TestSavedServerPrecedenceAndLegacyLogout(t *testing.T) {
 		t.Fatal("silently ignored broken config")
 	}
 }
+
+func TestServerURLValidationAndCorruptLegacySession(t *testing.T) {
+	for _, value := range []string{"https://:443", "https://example.test?", "https://user@example.test", "http://example.test"} {
+		if _, err := serverURL(value); err == nil {
+			t.Errorf("accepted invalid server %q", value)
+		}
+	}
+	if got, err := serverURL("http://LOCALHOST:8080/"); err != nil || got != "http://localhost:8080" {
+		t.Fatalf("loopback normalization: %q, %v", got, err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("TIKI_SERVER", "")
+	path, err := sessionPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(path, "invalid session"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&app{}).serverURL(); err == nil {
+		t.Fatal("corrupt legacy session silently selected the default server")
+	}
+}

@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"tiki/internal/tiki"
 )
 
@@ -47,11 +49,7 @@ func (a *app) inviteCommand() *cobra.Command {
 		if after != "" {
 			query.Set("after", after)
 		}
-		var page tiki.InvitePage
-		if err := a.request(cmd.Context(), "GET", "/api/v1/invites?"+query.Encode(), nil, &page); err != nil {
-			return err
-		}
-		return a.print(page)
+		return printResponse[tiki.InvitePage](a, cmd.Context(), "GET", "/api/v1/invites?"+query.Encode(), nil)
 	}
 	revoke := &cobra.Command{Use: "revoke ID", Short: "Disable an unused invite link", Args: cobra.ExactArgs(1)}
 	revoke.RunE = func(cmd *cobra.Command, args []string) error {
@@ -59,11 +57,7 @@ func (a *app) inviteCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var out any
-		if err = a.request(cmd.Context(), "DELETE", "/api/v1/invites/"+id.String(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[json.RawMessage](a, cmd.Context(), "DELETE", "/api/v1/invites/"+id.String(), nil)
 	}
 	root.AddCommand(create, list, revoke)
 	return root

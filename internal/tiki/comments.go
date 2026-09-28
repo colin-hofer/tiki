@@ -9,13 +9,17 @@ import (
 	"unicode/utf8"
 )
 
+// MaxCommentBytes bounds the UTF-8 body of one comment.
 const MaxCommentBytes = 16 << 10
 
+// CreateComment carries plain text and a caller-chosen idempotency key.
 type CreateComment struct {
 	Body     string `json:"body"`
 	ClientID string `json:"client_id"`
 }
 
+// AddComment appends a timeline entry without changing the ticket version.
+// Reusing a client ID with the same actor, ticket, and normalized body is idempotent.
 func (s *Store) AddComment(ctx context.Context, actor, item ID, in CreateComment) (Activity, error) {
 	var out Activity
 	in.Body = strings.TrimSpace(in.Body)
@@ -58,16 +62,8 @@ func (s *Store) AddComment(ctx context.Context, actor, item ID, in CreateComment
 			return err
 		}
 		out = Activity{ItemID: &item, ActorID: actor, Kind: "comment.created", Data: data, ClientID: in.ClientID, CreatedAt: now()}
-		result, err := tx.ExecContext(ctx, "INSERT INTO activity(item_id,actor_id,kind,data,created_at,client_id) VALUES(?,?,?,?,?,?)", item, actor, out.Kind, string(out.Data), out.CreatedAt, out.ClientID)
-		if err != nil {
-			return err
-		}
-		id, err := result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		out.ID = ID(id)
-		return nil
+		return tx.QueryRowContext(ctx, `INSERT INTO activity(item_id,actor_id,kind,data,created_at,client_id)
+			VALUES(?,?,?,?,?,?) RETURNING id`, item, actor, out.Kind, string(out.Data), out.CreatedAt, out.ClientID).Scan(&out.ID)
 	})
 	return out, err
 }

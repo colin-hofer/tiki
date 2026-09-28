@@ -1,14 +1,10 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,81 +13,6 @@ import (
 
 	"tiki/internal/tiki"
 )
-
-type clientSession struct {
-	Server  string       `json:"server"`
-	Session tiki.Session `json:"session"`
-}
-
-func sessionPath() (string, error) {
-	directory, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(directory, "tiki", "session.json"), nil
-}
-
-func loadSession() (clientSession, error) {
-	var session clientSession
-	path, err := sessionPath()
-	if err != nil {
-		return session, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return session, err
-	}
-	if err = json.Unmarshal(data, &session); err != nil {
-		return session, fmt.Errorf("cannot read saved session; run tiki auth login again")
-	}
-	return session, nil
-}
-
-func saveSession(session clientSession) error {
-	path, err := sessionPath()
-	if err != nil {
-		return err
-	}
-	if err = saveConfig(clientConfig{Server: session.Server}); err != nil {
-		return err
-	}
-	return writeConfig(path, session)
-}
-
-func clearSession() error {
-	// Preserve the address saved by older versions before removing credentials.
-	if _, err := loadConfig(); errors.Is(err, os.ErrNotExist) {
-		if session, err := loadSession(); err == nil {
-			if err := saveConfig(clientConfig{Server: session.Server}); err != nil {
-				return err
-			}
-		}
-	}
-	path, err := sessionPath()
-	if err != nil {
-		return err
-	}
-	err = os.Remove(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func serverURL(value string) (string, error) {
-	base, err := url.Parse(value)
-	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		return "", &tiki.Error{Code: "validation", Message: "server must be an HTTP(S) URL without credentials, query, or fragment"}
-	}
-	if base.Scheme == "http" {
-		ip := net.ParseIP(base.Hostname())
-		if base.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
-			return "", &tiki.Error{Code: "validation", Message: "HTTPS is required for remote servers; HTTP is allowed only on loopback"}
-		}
-	}
-	base.Host = strings.ToLower(base.Host)
-	return strings.TrimRight(base.String(), "/"), nil
-}
 
 func (a *app) password(cmd *cobra.Command, stdin, confirm bool, prompt string) (string, error) {
 	if stdin {
@@ -165,11 +86,7 @@ func (a *app) authCommand() *cobra.Command {
 	}
 	status := &cobra.Command{Use: "status", Short: "Check the saved session and show the current user", Args: cobra.NoArgs}
 	status.RunE = func(cmd *cobra.Command, _ []string) error {
-		var user tiki.User
-		if err := a.request(cmd.Context(), "GET", "/api/v1/auth/me", nil, &user); err != nil {
-			return err
-		}
-		return a.print(user)
+		return printResponse[tiki.User](a, cmd.Context(), "GET", "/api/v1/auth/me", nil)
 	}
 	logout := &cobra.Command{Use: "logout", Short: "Revoke the current session and remove the saved login", Args: cobra.NoArgs}
 	logout.RunE = func(cmd *cobra.Command, _ []string) error {

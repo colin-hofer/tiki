@@ -16,6 +16,8 @@ type Updates struct {
 	Reset    bool       `json:"reset,omitempty"`
 }
 
+// Updates reads a bounded batch between revisions. Items reflect one current
+// snapshot; a reset replaces batches that are too large or invalidate ordering.
 func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, error) {
 	out := Updates{Users: after.Users != until.Users}
 	if until.Activity < after.Activity {
@@ -88,4 +90,34 @@ func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, er
 		out.Items = append(out.Items, item)
 	}
 	return out, nil
+}
+
+// Changes closes after a successful write. Subscribe before reading Revision so
+// a commit between the read and the wait cannot be missed. Wakeups coalesce and
+// never wait for consumers; Revision remains the durable source of truth.
+func (s *Store) Changes() <-chan struct{} {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	return s.changed
+}
+
+func (s *Store) notify() {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	close(s.changed)
+	s.changed = make(chan struct{})
+}
+
+// Revision identifies the current item/activity and user-directory state.
+// Every item mutation appends activity; user-directory writes increment a
+// durable revision so role changes and removals also reach live clients.
+type Revision struct{ Activity, Users ID }
+
+// Revision reads the latest durable activity and user-directory revisions.
+func (s *Store) Revision(ctx context.Context) (Revision, error) {
+	var revision Revision
+	err := s.read.QueryRowContext(ctx, `SELECT
+		(SELECT coalesce(max(id), 0) FROM activity),
+		(SELECT revision FROM user_revision WHERE id=1)`).Scan(&revision.Activity, &revision.Users)
+	return revision, err
 }

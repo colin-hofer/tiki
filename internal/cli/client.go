@@ -16,6 +16,19 @@ import (
 // A valid 200-item page with 100 fully escaped tags per item can exceed 8 MiB.
 const maxResponseBytes = 16 << 20
 
+// Both API requests and public downloads stay on the configured server.
+var httpClient = &http.Client{
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func printResponse[T any](a *app, ctx context.Context, method, path string, body any) error {
+	var out T
+	if err := a.request(ctx, method, path, body, &out); err != nil {
+		return err
+	}
+	return a.print(out)
+}
+
 func (a *app) request(ctx context.Context, method, path string, body, out any) error {
 	server, err := a.serverURL()
 	if err != nil {
@@ -58,28 +71,33 @@ func (a *app) request(ctx context.Context, method, path string, body, out any) e
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
+	response, err := httpClient.Do(req)
 	if err != nil {
 		return &tiki.Error{Code: "transport", Message: err.Error()}
 	}
 	defer response.Body.Close()
 	limited := &io.LimitedReader{R: response.Body, N: maxResponseBytes + 1}
 	d := json.NewDecoder(limited)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var failure struct {
-			Error tiki.Error `json:"error"`
-		}
-		if err = d.Decode(&failure); err != nil || failure.Error.Code == "" {
-			return &tiki.Error{Code: "transport", Message: "server returned " + response.Status}
-		}
-		return &failure.Error
+	// Preserve integers even when a caller deliberately accepts an untyped response.
+	d.UseNumber()
+	var failure struct {
+		Error tiki.Error `json:"error"`
+	}
+	failed := response.StatusCode < 200 || response.StatusCode >= 300
+	if failed {
+		out = &failure
 	}
 	if err = d.Decode(out); err != nil {
-		return &tiki.Error{Code: "transport", Message: "invalid server response: " + err.Error()}
+		return &tiki.Error{Code: "transport", Message: "invalid server response (" + response.Status + "): " + err.Error()}
 	}
 	if err = d.Decode(new(any)); err != io.EOF || limited.N == 0 {
 		return &tiki.Error{Code: "transport", Message: "server response must contain one JSON value within 16 MiB"}
+	}
+	if failed {
+		if failure.Error.Code == "" {
+			return &tiki.Error{Code: "transport", Message: "server returned " + response.Status}
+		}
+		return &failure.Error
 	}
 	return nil
 }

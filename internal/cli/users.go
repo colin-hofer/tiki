@@ -27,11 +27,7 @@ func (a *app) userCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var out tiki.User
-		if err := a.request(cmd.Context(), "POST", "/api/v1/users", map[string]string{"name": name, "email": email, "role": role, "password": password}, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.User](a, cmd.Context(), "POST", "/api/v1/users", map[string]string{"name": name, "email": email, "role": role, "password": password})
 	}
 	var after string
 	var limit int
@@ -39,12 +35,8 @@ func (a *app) userCommand() *cobra.Command {
 	list.Flags().StringVar(&after, "after", "", "Continue after user ID")
 	list.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
-		var out any
 		q := url.Values{"limit": {strconv.Itoa(limit)}, "after": {after}}
-		if err := a.request(cmd.Context(), "GET", "/api/v1/users?"+q.Encode(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
+		return printResponse[tiki.UserPage](a, cmd.Context(), "GET", "/api/v1/users?"+q.Encode(), nil)
 	}
 	var newRole string
 	changeRole := &cobra.Command{Use: "role ID --role ROLE", Short: "Change a user's role (admin)", Args: cobra.ExactArgs(1)}
@@ -57,11 +49,7 @@ func (a *app) userCommand() *cobra.Command {
 		if newRole == "" {
 			return &tiki.Error{Code: "validation", Message: "--role is required"}
 		}
-		var user tiki.User
-		if err := a.request(cmd.Context(), "PATCH", "/api/v1/users/"+id.String(), map[string]string{"role": newRole}, &user); err != nil {
-			return err
-		}
-		return a.print(user)
+		return printResponse[tiki.User](a, cmd.Context(), "PATCH", "/api/v1/users/"+id.String(), map[string]string{"role": newRole})
 	}
 	remove := &cobra.Command{Use: "remove ID", Short: "Revoke a user's access and sessions, preserving ticket history (admin)", Args: cobra.ExactArgs(1)}
 	remove.RunE = func(cmd *cobra.Command, args []string) error {
@@ -69,31 +57,8 @@ func (a *app) userCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var user tiki.User
-		if err := a.request(cmd.Context(), "DELETE", "/api/v1/users/"+id.String(), nil, &user); err != nil {
-			return err
-		}
-		return a.print(user)
+		return printResponse[tiki.User](a, cmd.Context(), "DELETE", "/api/v1/users/"+id.String(), nil)
 	}
 	root.AddCommand(create, list, changeRole, remove)
-	return root
-}
-
-func (a *app) tagCommand() *cobra.Command {
-	root := &cobra.Command{Use: "tag", Short: "Browse generic workspace tags"}
-	var after string
-	var limit int
-	list := &cobra.Command{Use: "list", Short: "List tags; tags are created when added to items", Args: cobra.NoArgs}
-	list.Flags().StringVar(&after, "after", "", "Continue after this tag name")
-	list.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
-	list.RunE = func(cmd *cobra.Command, _ []string) error {
-		var out any
-		q := url.Values{"limit": {strconv.Itoa(limit)}, "after": {after}}
-		if err := a.request(cmd.Context(), "GET", "/api/v1/tags?"+q.Encode(), nil, &out); err != nil {
-			return err
-		}
-		return a.print(out)
-	}
-	root.AddCommand(list)
 	return root
 }

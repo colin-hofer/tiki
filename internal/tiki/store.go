@@ -13,7 +13,8 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Store owns a SQLite database. Reads use a bounded pool; writes are serialized
@@ -26,6 +27,8 @@ type Store struct {
 	changed       chan struct{}
 }
 
+// Open creates or migrates a database and opens its reader and writer pools.
+// Existing migrations run atomically; unsupported schemas are left untouched.
 func Open(path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, invalid("database path is required")
@@ -44,7 +47,7 @@ func Open(path string) (*Store, error) {
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
-	q := url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(5000)", "journal_mode(WAL)", "synchronous(FULL)"}, "_txlock": {"immediate"}}
+	q := url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(5000)", "synchronous(FULL)"}, "_txlock": {"immediate"}}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: abs, RawQuery: q.Encode()}).String())
 	if err != nil {
 		return nil, err
@@ -54,6 +57,10 @@ func Open(path string) (*Store, error) {
 	s := &Store{write: db, passwordSlots: make(chan struct{}, 2), changed: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	if err := enableWAL(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable WAL: %w", err)
+	}
 	err = s.transaction(ctx, func(tx *sql.Tx) error {
 		return migrate(ctx, tx)
 	})
@@ -79,6 +86,7 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// Close releases both pools after callers have stopped using the store.
 func (s *Store) Close() error { return errors.Join(s.read.Close(), s.write.Close()) }
 
 // Ping checks database availability for readiness probes.
@@ -100,31 +108,29 @@ func (s *Store) transaction(ctx context.Context, fn func(*sql.Tx) error) error {
 	return nil
 }
 
-// Changes closes after a successful write. Subscribe before reading Revision so
-// a commit between the read and the wait cannot be missed. Wakeups coalesce and
-// never wait for consumers; Revision remains the durable source of truth.
-func (s *Store) Changes() <-chan struct{} {
-	s.changeMu.Lock()
-	defer s.changeMu.Unlock()
-	return s.changed
+// Enabling WAL can require a lock upgrade that SQLite's busy handler cannot
+// wait for. Retry only this idempotent startup step, never a caller's mutation.
+func enableWAL(ctx context.Context, db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for {
+		_, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
-func (s *Store) notify() {
-	s.changeMu.Lock()
-	defer s.changeMu.Unlock()
-	close(s.changed)
-	s.changed = make(chan struct{})
-}
+// sql.Row and sql.Rows share the same projections.
+type scanner interface{ Scan(...any) error }
 
-// Revision identifies the current item/activity and user-directory state.
-// Every item mutation appends activity; user-directory writes increment a
-// durable revision so role changes and removals also reach live clients.
-type Revision struct{ Activity, Users ID }
-
-func (s *Store) Revision(ctx context.Context) (Revision, error) {
-	var revision Revision
-	err := s.read.QueryRowContext(ctx, `SELECT
-		(SELECT coalesce(max(id), 0) FROM activity),
-		(SELECT revision FROM user_revision WHERE id=1)`).Scan(&revision.Activity, &revision.Users)
-	return revision, err
+// sql.DB and sql.Tx can read the same record, with or without a snapshot.
+type rowQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }

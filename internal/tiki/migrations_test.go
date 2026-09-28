@@ -152,18 +152,33 @@ func TestMigrationFailureRollsBackWholeUpgrade(t *testing.T) {
 }
 
 func TestConcurrentMigrations(t *testing.T) {
-	path, db := legacyDatabase(t, 2)
-	db.Close()
-	var group sync.WaitGroup
-	for range 3 {
-		group.Go(func() {
-			s, err := Open(path)
-			if err != nil {
-				t.Error(err)
-				return
+	for _, version := range []int{0, 2, schemaVersion} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "new.db")
+			if version != 0 {
+				var db *sql.DB
+				path, db = legacyDatabase(t, version)
+				db.Close()
 			}
-			s.Close()
+			var group sync.WaitGroup
+			start := make(chan struct{})
+			for range 8 {
+				group.Go(func() {
+					<-start
+					s, err := Open(path)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer s.Close()
+					var actual int
+					if err := s.read.QueryRow("PRAGMA user_version").Scan(&actual); err != nil || actual != schemaVersion {
+						t.Errorf("schema: %d, %v", actual, err)
+					}
+				})
+			}
+			close(start)
+			group.Wait()
 		})
 	}
-	group.Wait()
 }
