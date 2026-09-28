@@ -92,4 +92,6 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 The CLI currently provides item create/get/list/update/move/activity. Comments, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity is a change history, not a writable comment feed. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
 
-Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent ticket URLs, successful writes, or completion evidence.
+Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent successful writes or completion evidence.
+
+A ticket's web page is `SERVER/?item=ID`, where SERVER is the effective server from `config show` without a trailing slash, for example `https://tiki.example.com/?item=123`. Use exactly this form when linking a ticket from a pull request or report; do not guess any other path.
