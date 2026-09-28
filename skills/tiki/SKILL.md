@@ -67,6 +67,8 @@ Use the updated item and new version returned by a successful mutation for subse
 
 For Markdown, use `--body-file FILE` or `--body-file -` for stdin. These replace the whole description, so preserve unrelated content. An empty description clears it. `--description` and `--body-file` are mutually exclusive. Prefer a prepared UTF-8 file or a quoted heredoc over interpolating ticket text into shell code. Limits: 300 characters for titles, 64 per tag, 256 KiB for descriptions, and 100 tags/assignees per item.
 
+Each item holds one optional external link, returned as `url`. Set it with `--link URL` on create or update (an absolute http(s) URL, at most 2048 characters); `--link ''` clears it. Use it for the pull request once one exists, for example when moving a ticket to `code_review`.
+
 For reordering, use `item move ID --before OTHER_ID --if-version VERSION` or `--after`, exactly one. Use the moved item's version. Order is workspace-wide, including items hidden by filters; the server resolves the anchor at commit time. Prefer relative moves over inventing numeric priority levels.
 
 ## Recover without overwriting or duplicating

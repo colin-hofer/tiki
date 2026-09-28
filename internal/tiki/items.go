@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net/url"
 	"slices"
 	"strings"
 	"unicode"
@@ -26,6 +27,12 @@ func validateItem(i Item) error {
 	}
 	if len(i.Description) > MaxDescriptionBytes || !utf8.ValidString(i.Description) {
 		return invalid("description must be UTF-8 and at most 256 KiB")
+	}
+	if i.URL != "" {
+		u, err := url.Parse(i.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || len(i.URL) > 2048 || strings.ContainsFunc(i.URL, unicode.IsControl) {
+			return invalid("url must be an absolute http(s) link of at most 2048 characters")
+		}
 	}
 	if !validStatus(i.Status) {
 		return invalid("unknown status")
@@ -125,14 +132,14 @@ func memberships(ctx context.Context, tx *sql.Tx, id ID, addUsers, removeUsers [
 // Both database/sql.Row and database/sql.Rows can scan the shared projection.
 type scanner interface{ Scan(...any) error }
 
-const itemColumns = `i.id,i.type,i.status,i.priority,i.title,i.created_by,i.created_at,i.updated_at,i.version,
+const itemColumns = `i.id,i.type,i.status,i.priority,i.title,i.created_by,i.created_at,i.updated_at,i.version,i.url,
  (SELECT json_group_array(CAST(user_id AS TEXT)) FROM (SELECT user_id FROM item_assignees WHERE item_id=i.id ORDER BY user_id)),
  (SELECT json_group_array(name) FROM (SELECT t.name FROM tags t JOIN item_tags it ON it.tag_id=t.id WHERE it.item_id=i.id ORDER BY t.name))`
 
 func scanItem(row scanner) (Item, error) {
 	var i Item
 	var assignees, tags string
-	err := row.Scan(&i.ID, &i.Type, &i.Status, &i.Priority, &i.Title, &i.CreatedBy, &i.CreatedAt, &i.UpdatedAt, &i.Version, &assignees, &tags, &i.Description)
+	err := row.Scan(&i.ID, &i.Type, &i.Status, &i.Priority, &i.Title, &i.CreatedBy, &i.CreatedAt, &i.UpdatedAt, &i.Version, &i.URL, &assignees, &tags, &i.Description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return i, missing()
 	}
@@ -189,7 +196,7 @@ func (s *Store) Create(ctx context.Context, actor ID, in CreateItem) (Item, erro
 	if in.Status == "" {
 		in.Status = StatusBacklog
 	}
-	base := Item{Title: strings.TrimSpace(in.Title), Description: in.Description, Type: in.Type, Status: in.Status}
+	base := Item{Title: strings.TrimSpace(in.Title), Description: in.Description, URL: strings.TrimSpace(in.URL), Type: in.Type, Status: in.Status}
 	if in.Priority != nil {
 		base.Priority = *in.Priority
 	}
@@ -206,7 +213,7 @@ func (s *Store) Create(ctx context.Context, actor ID, in CreateItem) (Item, erro
 			}
 		}
 		timestamp := now()
-		result, err := tx.ExecContext(ctx, "INSERT INTO items(type,status,priority,title,description,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", base.Type, base.Status, priority, base.Title, base.Description, actor, timestamp, timestamp)
+		result, err := tx.ExecContext(ctx, "INSERT INTO items(type,status,priority,title,description,url,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", base.Type, base.Status, priority, base.Title, base.Description, base.URL, actor, timestamp, timestamp)
 		if err != nil {
 			return err
 		}
@@ -245,6 +252,9 @@ func (s *Store) Update(ctx context.Context, actor, id ID, in UpdateItem) (Item, 
 		if in.Description != nil {
 			i.Description = *in.Description
 		}
+		if in.URL != nil {
+			i.URL = strings.TrimSpace(*in.URL)
+		}
 		if in.Type != nil {
 			i.Type = *in.Type
 		}
@@ -260,7 +270,7 @@ func (s *Store) Update(ctx context.Context, actor, id ID, in UpdateItem) (Item, 
 		if err = memberships(ctx, tx, id, in.AddAssignees, in.RemoveAssignees, in.AddTags, in.RemoveTags); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "UPDATE items SET title=?,description=?,type=?,status=?,priority=?,updated_at=?,version=version+1 WHERE id=?", i.Title, i.Description, i.Type, i.Status, i.Priority, now(), id)
+		_, err = tx.ExecContext(ctx, "UPDATE items SET title=?,description=?,url=?,type=?,status=?,priority=?,updated_at=?,version=version+1 WHERE id=?", i.Title, i.Description, i.URL, i.Type, i.Status, i.Priority, now(), id)
 		if err != nil {
 			return err
 		}

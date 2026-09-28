@@ -80,7 +80,7 @@ func (a *app) itemCommand() *cobra.Command {
 }
 
 func (a *app) createItem() *cobra.Command {
-	var title, description, file, typ, status string
+	var title, description, file, link, typ, status string
 	var tags, assignees []string
 	var priority float64
 	c := &cobra.Command{Use: "create", Short: "Create an item; defaults to the end of the priority order", Args: cobra.NoArgs}
@@ -88,6 +88,7 @@ func (a *app) createItem() *cobra.Command {
 	f.StringVar(&title, "title", "", "Item title (required)")
 	f.StringVar(&description, "description", "", "Markdown description")
 	f.StringVar(&file, "body-file", "", "Read description from a file or - for stdin")
+	f.StringVar(&link, "link", "", "External http(s) link, such as a pull request")
 	f.StringVar(&typ, "type", "task", "bug, feature, or task")
 	f.StringVar(&status, "status", "backlog", "Initial status")
 	f.Float64Var(&priority, "priority", 0, "Explicit finite rank; lower appears first")
@@ -105,7 +106,7 @@ func (a *app) createItem() *cobra.Command {
 				return err
 			}
 		}
-		in := tiki.CreateItem{Title: title, Description: description, Type: tiki.Type(typ), Status: tiki.Status(status), Tags: tags, Assignees: assigned}
+		in := tiki.CreateItem{Title: title, Description: description, URL: link, Type: tiki.Type(typ), Status: tiki.Status(status), Tags: tags, Assignees: assigned}
 		if cmd.Flags().Changed("priority") {
 			in.Priority = &priority
 		}
@@ -164,7 +165,7 @@ func (a *app) expectedVersion(ctx context.Context, id tiki.ID, explicit bool, ve
 }
 
 func (a *app) updateItem() *cobra.Command {
-	var title, description, file, typ, status string
+	var title, description, file, link, typ, status string
 	var addTags, removeTags, addUsers, removeUsers []string
 	var priority float64
 	var version int64
@@ -173,6 +174,7 @@ func (a *app) updateItem() *cobra.Command {
 	f.StringVar(&title, "title", "", "New title")
 	f.StringVar(&description, "description", "", "New Markdown description (empty clears it)")
 	f.StringVar(&file, "body-file", "", "Read description from a file or - for stdin")
+	f.StringVar(&link, "link", "", "External http(s) link, such as a pull request (empty clears it)")
 	f.StringVar(&typ, "type", "", "New type")
 	f.StringVar(&status, "status", "", "New status")
 	f.Float64Var(&priority, "priority", 0, "Explicit finite rank; prefer item move for relative ordering")
@@ -205,6 +207,9 @@ func (a *app) updateItem() *cobra.Command {
 		}
 		if f.Changed("description") || f.Changed("body-file") {
 			in.Description = &description
+		}
+		if f.Changed("link") {
+			in.URL = &link
 		}
 		if f.Changed("type") {
 			v := tiki.Type(typ)

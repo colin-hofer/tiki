@@ -39,6 +39,7 @@
     Trash2,
     KeyRound,
     Copy,
+    Link,
   } from '@lucide/svelte';
 
   let {
@@ -60,6 +61,7 @@
     up: ArrowUp,
     'arrow-down': ArrowDown,
     tag: Tag,
+    link: Link,
     person: User,
     info: Info,
     check: Check,
