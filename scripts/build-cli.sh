@@ -26,7 +26,7 @@ for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
             continue
         fi
     fi
-    echo "Bundling CLI for $platform…"
+    echo "Bundling CLI for ${platform}..."
     gzip -n -c "$cache/$platform" > "$temporary/$platform.gz"
     hash=$($checksum < "$temporary/$platform.gz")
     printf '%s %s\n' "$source_hash" "${hash%% *}" > "$temporary/source.sha256"

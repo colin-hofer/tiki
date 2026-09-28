@@ -19,7 +19,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "Connecting to $host…"
+echo "Connecting to ${host}..."
 ssh "${connection[@]}" -o ControlMaster=yes -o ControlPersist=no -Nf "$host"
 # If the connection dies, fail instead of asking for the passphrase again.
 connection+=(-o ControlMaster=no -o BatchMode=yes -o ProxyCommand=false)
