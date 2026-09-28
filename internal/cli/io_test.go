@@ -44,11 +44,11 @@ func TestOutputReportsBrokenPipes(t *testing.T) {
 }
 
 func TestBodyFileUsesProvidedInputAndBoundsSize(t *testing.T) {
-	got, err := bodyFile("-", strings.NewReader("from injected stdin"))
+	got, err := bodyFile("-", strings.NewReader("from injected stdin"), tiki.MaxDescriptionBytes)
 	if err != nil || got != "from injected stdin" {
 		t.Fatalf("body: %q, %v", got, err)
 	}
-	if _, err := bodyFile("-", strings.NewReader(strings.Repeat("x", 256*1024+1))); err == nil {
+	if _, err := bodyFile("-", strings.NewReader(strings.Repeat("x", 256*1024+1)), tiki.MaxDescriptionBytes); err == nil {
 		t.Fatal("unbounded description")
 	}
 }

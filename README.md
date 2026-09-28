@@ -148,6 +148,21 @@ Administrators can provision additional users with an initial password:
 
 Use the IDs returned by commands; the example IDs assume a fresh workspace. New users sign in with their own email and password. `auth password` changes the current user's password, revokes all their sessions, and requires a new login. `auth logout` revokes the current session and removes the saved login.
 
+## Comment on tickets
+
+Members and administrators can post comments from the CLI; every role can read them in the activity history:
+
+```sh
+tiki item comment 123 --body 'Implemented; tests pass.'
+tiki item comment 123 --body-file notes.txt --client-id unique-message-id
+tiki item comment 123 --body-file -  # read from stdin
+tiki item activity 123 --json
+```
+
+Supply exactly one of `--body` or `--body-file`. Comments are trimmed plain UTF-8 text, up to 16 KiB. They use the signed-in author and do not change the ticket's version or require `--if-version`. Success returns the committed activity event with its `client_id` and `data.body`. Activity reads combine changes and comments, oldest first; follow `next_after` with `--after` to continue.
+
+Choose a unique `--client-id` for each new comment and keep it for retries. Retrying the same ID and text on the same ticket, server, and account returns the original comment; different text with that ID fails with a conflict. IDs allow 1–128 ASCII letters, digits, hyphens, or underscores. If omitted, the CLI generates an ID and includes it in success output and request/output failures (`client_id` at the top level of JSON errors). After an uncertain result, reuse that ID with `--client-id` instead of generating another. Use an explicit ID in automation so it remains available even if the process is interrupted before printing a result. The CLI does not retry automatically.
+
 ## Authentication
 
 Passwords are stored as salted Argon2id hashes. Successful login creates a random session valid for seven days; the server stores only its hash. The CLI keeps one active login in `tiki/session.json` under the OS user configuration directory (`$XDG_CONFIG_HOME` or `~/.config` on Linux), with file permissions `0600`. It never stores your password. The session is bound to its server address and is not sent through redirects or to a different server.

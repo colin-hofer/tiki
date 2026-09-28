@@ -17,12 +17,13 @@ import (
 )
 
 type app struct {
-	server    string
-	json      bool
-	timeout   time.Duration
-	out       io.Writer
-	err       io.Writer
-	executing bool
+	server          string
+	json            bool
+	timeout         time.Duration
+	out             io.Writer
+	err             io.Writer
+	executing       bool
+	commentClientID string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -51,9 +52,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	if a.json {
-		_ = json.NewEncoder(stderr).Encode(map[string]any{"error": api})
+		out := map[string]any{"error": api}
+		if a.commentClientID != "" {
+			out["client_id"] = a.commentClientID
+		}
+		_ = json.NewEncoder(stderr).Encode(out)
 	} else {
 		fmt.Fprintln(stderr, "Error:", terminalText(api.Message))
+		if a.commentClientID != "" {
+			fmt.Fprintf(stderr, "Comment client ID: %q. To retry, pass --client-id with this ID and use the same text, ticket, server, and account.\n", a.commentClientID)
+		}
 	}
 	switch api.Code {
 	case "validation", "too_large", "unsupported_media_type", "method_not_allowed":

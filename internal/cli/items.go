@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -37,7 +41,7 @@ func (a *app) ids(ctx context.Context, values []string) ([]tiki.ID, error) {
 	return out, nil
 }
 
-func bodyFile(path string, r io.Reader) (string, error) {
+func bodyFile(path string, r io.Reader, maxBytes int) (string, error) {
 	if path != "-" {
 		f, err := os.Open(path)
 		if err != nil {
@@ -46,19 +50,19 @@ func bodyFile(path string, r io.Reader) (string, error) {
 		defer f.Close()
 		r = f
 	}
-	b, err := io.ReadAll(io.LimitReader(r, tiki.MaxDescriptionBytes+1))
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxBytes)+1))
 	if err != nil {
 		return "", err
 	}
-	if len(b) > tiki.MaxDescriptionBytes {
-		return "", &tiki.Error{Code: "validation", Message: "description must be at most 256 KiB"}
+	if len(b) > maxBytes {
+		return "", &tiki.Error{Code: "validation", Message: fmt.Sprintf("body must be at most %d KiB", maxBytes/1024)}
 	}
 	return string(b), nil
 }
 
 func (a *app) itemCommand() *cobra.Command {
 	root := &cobra.Command{Use: "item", Short: "Create, assign, tag, and reorder work"}
-	root.AddCommand(a.createItem(), a.listItems(), a.updateItem(), a.moveItem())
+	root.AddCommand(a.createItem(), a.listItems(), a.updateItem(), a.moveItem(), a.commentItem())
 	get := &cobra.Command{Use: "get ID", Short: "Get an item including its description and version", Args: cobra.ExactArgs(1)}
 	get.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := tiki.ParseID(args[0])
@@ -73,7 +77,7 @@ func (a *app) itemCommand() *cobra.Command {
 	}
 	var after string
 	var limit int
-	activity := &cobra.Command{Use: "activity ID", Short: "Read the item's durable change history", Args: cobra.ExactArgs(1)}
+	activity := &cobra.Command{Use: "activity ID", Short: "Read ticket changes and comments, oldest first", Args: cobra.ExactArgs(1)}
 	activity.Flags().StringVar(&after, "after", "0", "Continue after activity ID")
 	activity.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
 	activity.RunE = func(cmd *cobra.Command, args []string) error {
@@ -90,6 +94,46 @@ func (a *app) itemCommand() *cobra.Command {
 	}
 	root.AddCommand(get, activity)
 	return root
+}
+
+func (a *app) commentItem() *cobra.Command {
+	var body, file, clientID string
+	c := &cobra.Command{Use: "comment ID", Short: "Post a comment without changing the ticket's version", Args: cobra.ExactArgs(1)}
+	f := c.Flags()
+	f.StringVar(&body, "body", "", "Plain-text comment, at most 16 KiB")
+	f.StringVar(&file, "body-file", "", "Read comment from a file or - for stdin, at most 16 KiB")
+	f.StringVar(&clientID, "client-id", "", "Unique message ID (generated if omitted); reuse with the same text when retrying")
+	c.MarkFlagsOneRequired("body", "body-file")
+	c.MarkFlagsMutuallyExclusive("body", "body-file")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := tiki.ParseID(args[0])
+		if err != nil {
+			return err
+		}
+		if f.Changed("body-file") {
+			body, err = bodyFile(file, cmd.InOrStdin(), tiki.MaxCommentBytes)
+			if err != nil {
+				return err
+			}
+		}
+		body = strings.TrimSpace(body)
+		if body == "" || len(body) > tiki.MaxCommentBytes || !utf8.ValidString(body) {
+			return &tiki.Error{Code: "validation", Message: "comment must contain UTF-8 text and be at most 16 KiB"}
+		}
+		if !f.Changed("client-id") {
+			clientID = rand.Text()
+		}
+		// Retain the ID through request and output failures: the server may have
+		// committed the comment even if the caller never receives its response.
+		a.commentClientID = clientID
+		in := tiki.CreateComment{Body: body, ClientID: clientID}
+		var out tiki.Activity
+		if err := a.request(cmd.Context(), "POST", "/api/v1/items/"+id.String()+"/comments", in, &out); err != nil {
+			return err
+		}
+		return a.print(out)
+	}
+	return c
 }
 
 func (a *app) createItem() *cobra.Command {
@@ -114,7 +158,7 @@ func (a *app) createItem() *cobra.Command {
 			return err
 		}
 		if cmd.Flags().Changed("body-file") {
-			description, err = bodyFile(file, cmd.InOrStdin())
+			description, err = bodyFile(file, cmd.InOrStdin(), tiki.MaxDescriptionBytes)
 			if err != nil {
 				return err
 			}
@@ -224,7 +268,7 @@ func (a *app) updateItem() *cobra.Command {
 			in.Title = &title
 		}
 		if f.Changed("body-file") {
-			description, err = bodyFile(file, cmd.InOrStdin())
+			description, err = bodyFile(file, cmd.InOrStdin(), tiki.MaxDescriptionBytes)
 			if err != nil {
 				return err
 			}

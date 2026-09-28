@@ -1,6 +1,6 @@
 ---
 name: tiki
-description: Find, create, triage, assign, update, reorder, and inspect tickets through the Tiki CLI. Use for requests about Tiki tickets or coding work explicitly tied to a Tiki item. Developing Tiki itself does not activate this skill unless ticket work is requested.
+description: Find, manage, and discuss tickets through the Tiki CLI. Use for requests about Tiki tickets or coding work explicitly tied to a Tiki item. Developing Tiki itself does not activate this skill unless ticket work is requested.
 ---
 
 # Tiki tickets
@@ -41,6 +41,7 @@ tiki --json tag list --limit 50
 ```
 
 - Go straight to `item get ID` when the ID is known. Lists omit descriptions; fetch the full ticket before editing it or acting on its requirements.
+- Read relevant discussion with `item activity ID` before working on a ticket. This combines changes and comments, oldest first; follow `next_after` with `--after` to reach the current discussion. The first page is not necessarily recent history.
 - Lists return `items` and optional `next_cursor`. Continue with `--cursor` and the same filters. Users, tags, and activity return `next_after`, continued with `--after`. Stop when the cursor is absent or the task has enough information. A partial page is not proof that no match exists.
 - Pages default to 50 and cap at 200. Pagination is live: concurrent moves can shift results. Deduplicate by ID when collecting multiple pages.
 - Repeated `--tag` filters use AND. Tags are trimmed/lowercased. IDs are decimal strings in JSON; preserve them without floating-point conversion.
@@ -66,11 +67,24 @@ Combine related field changes in one update. Use `--add-tag`/`--remove-tag` and 
 
 Use the updated item and new version returned by a successful mutation for subsequent work; no verification GET is normally necessary. Retain the full content that informed a description edit so a later conflict can be reconciled. Transition status according to the requested work and repository conventions; do not mark a ticket complete merely because a command succeeded.
 
-For Markdown, use `--body-file FILE` or `--body-file -` for stdin. These replace the whole description, so preserve unrelated content. An empty description clears it. `--description` and `--body-file` are mutually exclusive. Prefer a prepared UTF-8 file or a quoted heredoc over interpolating ticket text into shell code. Limits: 300 characters for titles, 64 per tag, 256 KiB for descriptions, and 100 tags/assignees per item.
+On `item create` and `item update`, use `--body-file FILE` or `--body-file -` for Markdown descriptions. These replace the whole description, so preserve unrelated content. An empty description clears it. `--description` and `--body-file` are mutually exclusive. Prefer a prepared UTF-8 file or a quoted heredoc over interpolating ticket text into shell code. Limits: 300 characters for titles, 64 per tag, 256 KiB for descriptions, and 100 tags/assignees per item.
 
 Each item holds one optional external link, returned as `url`. Set it with `--link URL` on create or update (an absolute http(s) URL, at most 2048 characters); `--link ''` clears it. Use it for the pull request once one exists, for example when moving a ticket to `code_review`.
 
 For reordering, use `item move ID --before OTHER_ID --if-version VERSION` or `--after`, exactly one. Use the moved item's version. Order is workspace-wide, including items hidden by filters; the server resolves the anchor at commit time. Prefer relative moves over inventing numeric priority levels.
+
+## Comments and discussion
+
+When requested or covered by the authorized ticket workflow, post concise findings, blockers, or completion notes as comments. Keep the description focused on the task; do not append progress notes there or post every intermediate step. A request only to inspect a ticket does not authorize posting a comment.
+
+```sh
+tiki --json item comment 123 --body 'Implemented; tests pass.' --client-id unique-message-id
+tiki --json item comment 123 --body-file notes.txt --client-id another-message-id
+```
+
+Use exactly one of `--body` or `--body-file`; `--body-file -` reads stdin. Comments are trimmed plain UTF-8 text, at most 16 KiB, and require member/admin access. The server supplies the author. They do not change the ticket's version and need no `--if-version`. Success returns the committed activity event, including `client_id` and `data.body`.
+
+Choose and retain a unique `--client-id` before the first send (1–128 ASCII letters, digits, hyphens, or underscores; the IDs above are illustrative). For an uncertain delivery, retry once with the same ID, text, ticket, server, and account: the server returns the original comment instead of duplicating it. If delivery remains uncertain, report the client ID and stop. Reusing an ID with different text returns a conflict; do not switch to a new ID to bypass it. The CLI generates an ID when omitted and includes it as top-level `client_id` in JSON errors after preparing the request, but an explicit ID also survives interruption before output is received.
 
 ## Recover without overwriting or duplicating
 
@@ -80,19 +94,19 @@ Read `error.code`, not just the exit code:
 | --- | --- | --- |
 | 2 | Validation or usage | Correct the input using the error and help; do not repeat unchanged. |
 | 3 | Not found | Check the ID and server; do not recreate a missing ticket automatically. |
-| 4 | `conflict` | Reread the ticket, compare with the prior read, and recompute only the intended changes. Do not just copy `current_version` onto the old payload. If intent remains clear, make one reconciled attempt; if it conflicts again or the edits cannot be reconciled, report the conflict with the ticket ID. |
+| 4 | `conflict` | For comments, follow the client-ID rules above. For item edits/moves, reread the ticket, compare with the prior read, and recompute only the intended changes. Do not just copy `current_version` onto the old payload. If intent remains clear, make one reconciled attempt; if it conflicts again or the edits cannot be reconciled, report the conflict with the ticket ID. |
 | 4 | `cursor_expired` | Restart pagination once with the same filters and deduplicate collected IDs. |
 | 5 | Authentication or authorization | Resolve sign-in or the missing permission; do not repeatedly retry. |
-| 6 | Transport, timeout, unavailable service, rate limit | Reads may be retried once after an appropriate delay. Writes may have committed: inspect state before another mutation. |
+| 6 | Transport, timeout, unavailable service, rate limit | Reads may be retried once after an appropriate delay. Retry comments using the same client ID as above. Other writes may have committed: inspect state before another mutation. |
 | 1 | Unexpected failure | Report the failure; if submission could have happened, treat the write outcome as uncertain. |
 
-There are no idempotency keys or automatic write retries currently. After an uncertain create, inspect matching candidates using the original fields and full records. A matching title alone does not prove identity, and absence from one priority page does not prove failure. If the result cannot be established, report the uncertain outcome and stop that create attempt rather than issuing another create automatically.
+Only comments have idempotency keys; the CLI never automatically retries writes. After an uncertain item create, inspect matching candidates using the original fields and full records. A matching title alone does not prove identity, and absence from one priority page does not prove failure. If the result cannot be established, report the uncertain outcome and stop that create attempt rather than issuing another create automatically.
 
 After an uncertain update or move, read the current item and relevant activity/order. If the intended outcome is present, do not repeat it. Otherwise reconcile using the conflict procedure; do not automatically resubmit the old payload with a newer version.
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/activity. Comment creation, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity includes ticket changes and comments; the CLI cannot post comments. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
+The CLI currently provides item create/get/list/update/move/comment/activity. Description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. If an older CLI lacks `item comment`, report that it needs updating; do not emulate comments by appending to descriptions.
 
 Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent successful writes or completion evidence.
 
