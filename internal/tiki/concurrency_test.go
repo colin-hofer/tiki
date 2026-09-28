@@ -121,7 +121,7 @@ func TestConcurrentStoresHaveOneEditWinner(t *testing.T) {
 	if winners != 1 {
 		t.Fatalf("got %d successful edits", winners)
 	}
-	page, err := first.Activity(t.Context(), item.ID, 0, 50)
+	page, err := first.Activity(t.Context(), item.ID, 0, nil, 50)
 	if err != nil || len(page.Activity) != 2 {
 		t.Fatalf("non-atomic history: %+v, %v", page, err)
 	}

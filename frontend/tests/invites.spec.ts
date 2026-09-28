@@ -1,5 +1,6 @@
 import { test, expect, type BrowserContext } from '@playwright/test';
 import type { User } from '../src/api';
+import { statuses } from '../src/api';
 
 const token = 'a'.repeat(43);
 const admin = { id: '1', name: 'Admin', email: 'admin@example.test', role: 'admin' };
@@ -66,7 +67,11 @@ async function mock(context: BrowserContext) {
       return reply(user);
     }
     if (path === '/board')
-      return reply({ columns: {}, users: { users: state.users }, tags: { tags: [] } });
+      return reply({
+        columns: Object.fromEntries(statuses.map((status) => [status, { items: [] }])),
+        users: { users: state.users },
+        tags: { tags: [] },
+      });
     if (path === '/events')
       return route.fulfill({
         contentType: 'text/event-stream',

@@ -68,6 +68,8 @@ Use the updated item and new version returned by a successful mutation for subse
 
 For Markdown, use `--body-file FILE` or `--body-file -` for stdin. These replace the whole description, so preserve unrelated content. An empty description clears it. `--description` and `--body-file` are mutually exclusive. Prefer a prepared UTF-8 file or a quoted heredoc over interpolating ticket text into shell code. Limits: 300 characters for titles, 64 per tag, 256 KiB for descriptions, and 100 tags/assignees per item.
 
+Each item holds one optional external link, returned as `url`. Set it with `--link URL` on create or update (an absolute http(s) URL, at most 2048 characters); `--link ''` clears it. Use it for the pull request once one exists, for example when moving a ticket to `code_review`.
+
 For reordering, use `item move ID --before OTHER_ID --if-version VERSION` or `--after`, exactly one. Use the moved item's version. Order is workspace-wide, including items hidden by filters; the server resolves the anchor at commit time. Prefer relative moves over inventing numeric priority levels.
 
 ## Recover without overwriting or duplicating
@@ -90,7 +92,7 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/activity. Comments, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity is a change history, not a writable comment feed. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
+The CLI currently provides item create/get/list/update/move/activity. Comment creation, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity includes ticket changes and comments; the CLI cannot post comments. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
 
 Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent successful writes or completion evidence.
 

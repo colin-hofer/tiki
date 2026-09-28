@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import type { Item, Status, Updates } from '../src/api';
 import { itemFields, itemPatch, rebaseFields } from '../src/item-edit';
+import { applyItemChanges, reconcileItems } from '../src/items';
 
 const user = { id: '1', name: 'Alex Morgan', role: 'member' };
 const statuses: Status[] = [
@@ -177,7 +178,11 @@ async function mock(
       const start = Number(cursor);
       const end = start + limit;
       return {
-        items: matching.slice(start, end).map(({ description, ...rest }) => rest),
+        items: matching
+          .slice(start, end)
+          .map(({ description, ...rest }) =>
+            description ? { ...rest, preview: description } : rest,
+          ),
         ...(end < matching.length ? { next_cursor: String(end) } : {}),
       };
     };
@@ -245,7 +250,8 @@ async function mock(
     const id = path.split('/')[2];
     const current = state.items.find((i) => i.id === id);
     if (!current) return reply({ error: { code: 'not_found', message: 'Item not found' } }, 404);
-    if (request.method() === 'GET') return reply(current);
+    if (request.method() === 'GET')
+      return reply({ ...current, preview: current.description || undefined });
     if (current.version !== body.version)
       return reply(
         { error: { code: 'conflict', message: 'Item changed', current_version: current.version } },
@@ -275,7 +281,7 @@ async function mock(
     }
     current.version++;
     await state.beforeReply?.(current);
-    return reply(current);
+    return reply({ ...current, preview: current.description || undefined });
   });
   return state;
 }
@@ -297,11 +303,11 @@ test('refreshes reuse unchanged tickets and order detection follows the current 
   await mock(context, [makeItem(1, 'todo'), makeItem(2, 'todo')]);
   await page.goto('/');
   const result = await page.evaluate(async () => {
-    const { BoardState } = await import('../src/board.svelte.ts');
+    const { BoardState } = await import('../src/board-state.svelte.ts');
     const data = new BoardState('1', () => {});
     data.start();
     try {
-      await data.refresh({ order: true });
+      await data.refresh();
       const original = data.items;
       await data.refresh();
       const sameRows = data.items === original;
@@ -331,6 +337,154 @@ test('refreshes reuse unchanged tickets and order detection follows the current 
     remaining: ['2'],
     orderedAfterDelete: true,
   });
+});
+
+test('reconciliation preserves versions and positions while paged moves identify only affected columns', () => {
+  const filters = { status: '' as const, tag: '', assignee: '' };
+  const first = makeItem(1, 'todo');
+  const second = makeItem(2, 'todo');
+  const current = [first, second];
+  expect(reconcileItems(current, [{ ...first }], filters)).toBe(current);
+  const changed = { ...second, priority: 0, version: 2 };
+  const live = applyItemChanges(current, [changed], {}, filters);
+  expect(live.items.map((item) => item.id)).toEqual(['1', '2']);
+  expect(live.items[0]).toBe(first);
+  expect(live.columns.size).toBe(0);
+  expect(reconcileItems(live.items, [second], filters)).toBe(live.items);
+  expect(reconcileItems(live.items, [], filters, [], true).map((item) => item.id)).toEqual([
+    '2',
+    '1',
+  ]);
+  const moved = { ...first, status: 'complete' as const, version: 2 };
+  const page = applyItemChanges(current, [moved], { todo: 'cursor' }, filters);
+  expect([...page.columns]).toEqual(['todo']);
+  expect(page.items.find((item) => item.id === '1')?.status).toBe('complete');
+  expect(
+    reconcileItems(current, [first], { ...filters, status: 'todo', tag: 'api' }, ['todo']),
+  ).toEqual([first]);
+});
+
+test('changing filters cancels a slow snapshot without replacing the newer view', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await signIn(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let requested!: () => void;
+  const started = new Promise<void>((resolve) => (requested = resolve));
+  await page.route('**/api/v1/board?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('status') === 'todo') {
+      requested();
+      await held;
+    }
+    await route.fallback();
+  });
+  const filter = page.getByRole('combobox', { name: 'Filter status', exact: true });
+  await filter.click();
+  await page.getByRole('option', { name: 'Todo', exact: true }).click();
+  await started;
+  await filter.click();
+  await page.getByRole('option', { name: 'In progress', exact: true }).click();
+  await expect(page.locator('#ticket-3')).toBeVisible();
+  release();
+  await expect(page.locator('.kanban-column')).toHaveCount(1);
+  await expect(page.locator('[data-column="in_progress"] .card')).toHaveCount(2);
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+});
+
+test('expired pagination resets the loaded pages and retries through the sync queue', async ({
+  page,
+  context,
+}) => {
+  await mock(
+    context,
+    Array.from({ length: 130 }, (_, i) => makeItem(i + 1, 'backlog')),
+  );
+  await signIn(page);
+  await page.route('**/api/v1/items?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'cursor_expired', message: 'Cursor expired' } }),
+      });
+    } else await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Load more', exact: true }).click();
+  await expect(page.getByText('Order changed; loaded pages reset.', { exact: true })).toBeVisible();
+  await expect(page.locator('.connection')).toHaveText('Live');
+  await expect(page.locator('[data-column="backlog"] .card')).toHaveCount(20);
+  await expect(page.getByRole('button', { name: 'Load more', exact: true })).toBeEnabled();
+});
+
+test('switching tickets cancels the previous detail request', async ({ page, context }) => {
+  await mock(context);
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { TicketState } = await import('../src/ticket.svelte.ts');
+    const ticket = new TicketState('1');
+    const first = ticket.open('1');
+    const second = ticket.open('2');
+    await Promise.all([first, second]);
+    const loaded = {
+      id: ticket.id,
+      item: ticket.item?.id,
+      loading: ticket.loading,
+      error: ticket.error,
+    };
+    const pending = ticket.open('3');
+    ticket.stop();
+    await pending;
+    return { loaded, cancelled: ticket.item === null && !ticket.loading && !ticket.error };
+  });
+  expect(result).toEqual({
+    loaded: { id: '2', item: '2', loading: false, error: '' },
+    cancelled: true,
+  });
+});
+
+test('restarting the stream during a write resumes pending synchronization after its acknowledgement', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await page.goto('/');
+  const title = await page.evaluate(async () => {
+    const { BoardState } = await import('../src/board-state.svelte.ts');
+    let refreshed!: () => void;
+    const restarted = new Promise<void>((resolve) => (refreshed = resolve));
+    let firstLoad = true;
+    const data = new BoardState('1', () => {
+      if (!firstLoad) refreshed();
+    });
+    data.start();
+    await data.refresh();
+    const fetch = window.fetch;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    window.fetch = async (input, init) => {
+      if (init?.method === 'PATCH') await held;
+      return fetch(input, init);
+    };
+    try {
+      const saving = data.update('2', 1, { title: 'Saved across a reconnect' });
+      data.start();
+      firstLoad = false;
+      // Let the ready-event debounce run while the old write is still pending.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      await saving;
+      await restarted;
+      return data.itemsById.get('2')?.title;
+    } finally {
+      release();
+      window.fetch = fetch;
+      data.stop();
+    }
+  });
+  expect(title).toBe('Saved across a reconnect');
 });
 
 test('unsaved editor state immediately protects unload and disables board dragging', async ({
@@ -393,15 +547,20 @@ test('live role changes update permissions without losing an open draft', async 
   const state = await mock(context);
   await signIn(page);
   await page.locator('#ticket-2').click();
+  await page.getByLabel('Comment', { exact: true }).fill('Keep my comment draft');
   await page.getByLabel('Ticket title', { exact: true }).fill('Keep my draft');
   state.viewer = true;
   await state.notify('change', { users: true });
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveValue('Keep my comment draft');
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveJSProperty('readOnly', true);
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
   state.viewer = false;
   await state.notify('change', { users: true });
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveJSProperty('readOnly', false);
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
   await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   expect(state.items.find((item) => item.id === '2')?.title).toBe('Keep my draft');
@@ -515,6 +674,202 @@ test('failed saves keep draft and viewer controls cannot mutate', async ({ page,
   await expect(page.locator('.connection')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Ticket title')).toBeDisabled();
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveCount(0);
+});
+
+test('list view keeps every board shortcut, collapses groups, and remembers the layout', async ({
+  page,
+  context,
+}, testInfo) => {
+  const state = await mock(context, [
+    makeItem(1, 'backlog'),
+    makeItem(2, 'backlog'),
+    makeItem(3, 'in_progress'),
+    makeItem(4, 'in_progress'),
+    makeItem(5, 'complete'),
+  ]);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await signIn(page);
+  await page.keyboard.press('v');
+  await expect(page.locator('.list-view')).toBeVisible();
+  await expect(page.locator('.kanban-column')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'List view' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page).toHaveURL(/view=list/);
+  await page.screenshot({ path: testInfo.outputPath('list-desktop.png') });
+
+  // j/k walk the list top to bottom across groups, through each group header; h/l leave and enter groups.
+  await page.keyboard.press('1');
+  await expect(page.locator('#ticket-1')).toBeFocused();
+  const order = [
+    '#ticket-2',
+    '#column-todo',
+    '#column-in_progress',
+    '#ticket-3',
+    '#ticket-4',
+    '#column-code_review',
+  ];
+  for (const stop of order) {
+    await page.keyboard.press('j');
+    await expect(page.locator(stop)).toBeFocused();
+  }
+  for (const stop of [
+    '#ticket-4',
+    '#ticket-3',
+    '#column-in_progress',
+    '#column-todo',
+    '#ticket-2',
+  ]) {
+    await page.keyboard.press('ArrowUp');
+    await expect(page.locator(stop)).toBeFocused();
+  }
+  await page.keyboard.press('l');
+  await expect(page.locator('#ticket-2')).toBeFocused();
+  await page.keyboard.press('h');
+  await expect(page.locator('#column-backlog')).toBeFocused();
+  await page.keyboard.press('3');
+  await expect(page.locator('#ticket-3')).toBeFocused();
+  await page.keyboard.press('h');
+  await expect(page.locator('#column-in_progress')).toBeFocused();
+  await page.keyboard.press('h');
+  await expect(page.locator('#column-in_progress')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#ticket-3')).toHaveCount(0);
+  await page.keyboard.press('j');
+  await expect(page.locator('#column-code_review')).toBeFocused();
+  await page.keyboard.press('k');
+  await page.keyboard.press('l');
+  await expect(page.locator('#column-in_progress')).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('l');
+  await expect(page.locator('#ticket-3')).toBeFocused();
+  await page.keyboard.press('Shift+G');
+  await expect(page.locator('#ticket-5')).toBeFocused();
+  await page.keyboard.press('g');
+  await page.keyboard.press('g');
+  await expect(page.locator('#ticket-1')).toBeFocused();
+  await page.keyboard.press('3');
+  await expect(page.locator('#ticket-3')).toBeFocused();
+
+  // Alt+↑/↓ reorders, and past a group edge moves into the neighbouring status. Sideways moves do nothing.
+  const inProgress = page.getByRole('region', { name: 'In progress group', exact: true });
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(inProgress.locator('.row').nth(1)).toHaveAttribute('id', 'ticket-3');
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect.poll(() => state.items.find((i) => i.id === '3')?.status).toBe('code_review');
+  await expect(
+    page.getByRole('region', { name: 'Code review group', exact: true }).locator('#ticket-3'),
+  ).toBeFocused();
+  await page.keyboard.press('Shift+K');
+  await expect.poll(() => state.items.find((i) => i.id === '3')?.status).toBe('in_progress');
+  await expect(inProgress.locator('.row').nth(1)).toHaveAttribute('id', 'ticket-3');
+  await expect(inProgress.locator('#ticket-3')).toBeFocused();
+  const writes = state.writes;
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.keyboard.press('Shift+L');
+  await page.keyboard.press('Shift+H');
+  await expect(inProgress.locator('#ticket-3')).toBeFocused();
+  expect(state.writes).toBe(writes);
+
+  // Property menus, create and open work exactly as on the board.
+  await page.keyboard.press('s');
+  await page.getByRole('option', { name: 'Blocked' }).click();
+  await expect.poll(() => state.items.find((i) => i.id === '3')?.status).toBe('blocked');
+  await expect(
+    page.getByRole('region', { name: 'Blocked group', exact: true }).locator('#ticket-3'),
+  ).toBeFocused();
+  await page.keyboard.press('c');
+  await page.getByLabel('New item title').fill('Captured from the list');
+  await page.keyboard.press('Enter');
+  await expect(
+    page.getByRole('region', { name: 'Blocked group', exact: true }).getByRole('button', {
+      name: /TK-6: Captured from the list/,
+    }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.locator('#ticket-6').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('complementary', { name: 'Item 6', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#ticket-6')).toBeFocused();
+
+  // X collapses the current group; navigation skips it and it stays collapsed after a reload.
+  await page.keyboard.press('1');
+  await page.keyboard.press('x');
+  await expect(page.locator('#column-backlog')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#column-backlog')).toBeFocused();
+  await expect(page.locator('#ticket-1')).toHaveCount(0);
+  await page.keyboard.press('j');
+  await expect(page.locator('#column-todo')).toBeFocused();
+  await page.keyboard.press('k');
+  await expect(page.locator('#column-backlog')).toBeFocused();
+  await page.keyboard.press('l');
+  await expect(page.locator('#ticket-1')).toBeVisible();
+  await page.keyboard.press('x');
+  await page.goto('/');
+  await expect(page.locator('.list-view')).toBeVisible();
+  await expect(page.locator('#column-backlog')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#column-backlog').click();
+  await expect(page.locator('#ticket-1')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Board view' }).click();
+  await expect(page.locator('.kanban-column')).toHaveCount(7);
+  await expect(page).not.toHaveURL(/view=/);
+  expect(errors).toEqual([]);
+});
+
+test('list rows reorder and change status by drag and drop', async ({ page, context }) => {
+  const state = await mock(context, [
+    makeItem(1, 'todo'),
+    makeItem(2, 'todo'),
+    makeItem(3, 'todo'),
+    makeItem(4, 'backlog'),
+  ]);
+  await signIn(page);
+  await page.getByRole('button', { name: 'List view' }).click();
+  const todo = page.getByRole('region', { name: 'Todo group', exact: true });
+  await page
+    .locator('#ticket-3')
+    .dragTo(page.locator('#ticket-1'), { targetPosition: { x: 20, y: 3 } });
+  await expect(todo.locator('.row').first()).toHaveAttribute('id', 'ticket-3');
+  await page
+    .locator('#ticket-4')
+    .dragTo(page.locator('#ticket-1'), { targetPosition: { x: 20, y: 3 } });
+  await expect.poll(() => state.items.find((i) => i.id === '4')?.status).toBe('todo');
+  await expect(todo.locator('.row').nth(1)).toHaveAttribute('id', 'ticket-4');
+});
+
+test('cards and list rows preview descriptions and follow description edits', async ({
+  page,
+  context,
+}, testInfo) => {
+  const state = await mock(context, [
+    makeItem(1, 'todo'),
+    { ...makeItem(2, 'todo'), description: '' },
+  ]);
+  await signIn(page);
+  const card = page.locator('#ticket-1');
+  await expect(card.locator('.card-preview')).toHaveText(state.items[0].description!);
+  await expect(page.locator('#ticket-2 .card-preview')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('preview-board.png') });
+  await card.click();
+  await page.getByLabel('Description', { exact: true }).fill('Rewritten plan for the endpoint');
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(card.locator('.card-preview')).toHaveText('Rewritten plan for the endpoint');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('v');
+  await expect(page.locator('#ticket-1 .row-preview')).toHaveText(
+    'Rewritten plan for the endpoint',
+  );
+  await expect(page.locator('#ticket-2 .row-preview')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('preview-list.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#ticket-1 .row-preview')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('preview-list-mobile.png') });
 });
 
 test('compact layout and command palette stay keyboard accessible on narrow screens', async ({
@@ -844,11 +1199,21 @@ test('mobile details keep Tab in the panel and return to the selected ticket', a
   await page.locator('#ticket-2').click();
   await expect(page.getByLabel('Ticket title')).toBeFocused();
   const panel = page.getByRole('complementary', { name: 'Item 2', exact: true });
-  await panel.getByRole('button', { name: 'Activity', exact: true }).focus();
+  await panel.getByLabel('Description', { exact: true }).focus();
+  await page.keyboard.press('Tab');
+  const composer = panel.getByLabel('Comment', { exact: true });
+  await expect(composer).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(panel.getByRole('button', { name: 'Previous ticket', exact: true })).toBeFocused();
   await page.keyboard.press('Shift+Tab');
-  await expect(panel.getByRole('button', { name: 'Activity', exact: true })).toBeFocused();
+  await expect(composer).toBeFocused();
+  await composer.fill('Keep this mobile draft');
+  await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Previous ticket', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeFocused();
   await page.keyboard.press('F6');
   await expect(panel).toHaveCount(0);
   await expect(page.locator('#ticket-2')).toBeFocused();
@@ -1029,6 +1394,42 @@ test.describe('phone layout', () => {
     await confirmation.getByRole('button', { name: 'Delete ticket', exact: true }).click();
     await expect(target).toHaveCount(0);
     expect(state.methods.at(-1)).toBe('DELETE');
+  });
+
+  test('list view fits the phone, opens tickets, and creates in the current group', async ({
+    page,
+    context,
+  }, testInfo) => {
+    const state = await mock(context);
+    await signIn(page);
+    await page.getByRole('button', { name: 'List view' }).click();
+    await expect(page.locator('.list-view')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Statuses' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Board view' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'List view' })).toBeHidden();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBe(0);
+    const row = (await page.locator('#ticket-3').boundingBox())!;
+    expect(row.height).toBeGreaterThanOrEqual(44);
+    expect(row.width).toBe(390);
+    await page.screenshot({ path: testInfo.outputPath('list-mobile.png') });
+
+    await page.locator('#column-in_progress').click();
+    await expect(page.locator('#ticket-3')).toHaveCount(0);
+    await page.locator('#column-in_progress').click();
+    await page.locator('#ticket-3').click();
+    const panel = page.getByRole('complementary', { name: 'Item 3', exact: true });
+    await expect(panel).toBeVisible();
+    await panel.getByRole('button', { name: 'Close details', exact: true }).click();
+
+    await page.getByRole('button', { name: 'Add item to Blocked', exact: true }).click();
+    await page.getByLabel('New item title').fill('Filed from the phone list');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect
+      .poll(() => state.items.find((i) => i.title === 'Filed from the phone list')?.status)
+      .toBe('blocked');
   });
 
   test('press and hold lifts a card; drag vertically to reorder and to an edge to change status', async ({

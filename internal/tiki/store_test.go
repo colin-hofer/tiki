@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 const testPassword = "correct horse battery staple"
@@ -57,6 +58,31 @@ func TestTitleQuery(t *testing.T) {
 	}
 	_, err = s.List(t.Context(), Filter{Query: "first", Limit: 1, Cursor: p.NextCursor})
 	requireCode(t, err, "validation")
+}
+
+func TestItemLink(t *testing.T) {
+	s, admin := fixture(t)
+	i := addItem(t, s, admin.ID, "Linked")
+	link := " https://github.com/accurise/tiki/pull/42 "
+	i, err := s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &link})
+	if err != nil || i.URL != "https://github.com/accurise/tiki/pull/42" {
+		t.Fatalf("link not stored trimmed: %q, %v", i.URL, err)
+	}
+	page, err := s.List(t.Context(), Filter{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].URL != i.URL {
+		t.Fatalf("link missing from list: %+v, %v", page, err)
+	}
+	for _, bad := range []string{"ftp://x", "github.com/pull/1", "javascript:alert(1)", "https://x/a\tb", "https://" + strings.Repeat("a", 2048)} {
+		_, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &bad})
+		requireCode(t, err, "validation")
+	}
+	empty := ""
+	if i, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &empty}); err != nil || i.URL != "" {
+		t.Fatalf("link not cleared: %q, %v", i.URL, err)
+	}
+	if _, err = s.Create(t.Context(), admin.ID, CreateItem{Title: "Bad", URL: "nope"}); err == nil {
+		t.Fatal("create accepted an invalid link")
+	}
 }
 
 func requireCode(t *testing.T, err error, code string) {
@@ -108,7 +134,7 @@ func TestMembershipsFiltersAndRollback(t *testing.T) {
 	if err != nil || len(p.Items) != 2 {
 		t.Fatalf("failed create persisted: %+v, %v", p, err)
 	}
-	entries, err := s.Activity(t.Context(), i.ID, 0, 50)
+	entries, err := s.Activity(t.Context(), i.ID, 0, nil, 50)
 	if err != nil || len(entries.Activity) != 2 {
 		t.Fatalf("activity not atomic: %+v, %v", entries, err)
 	}
@@ -128,7 +154,7 @@ func TestActivityPaginationBoundsLargeDescriptions(t *testing.T) {
 	var after ID
 	total := 0
 	for {
-		page, err := s.Activity(t.Context(), i.ID, after, 200)
+		page, err := s.Activity(t.Context(), i.ID, 0, &after, 200)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,5 +392,42 @@ func BenchmarkCreateAndMove(b *testing.B) {
 		if _, err = s.Move(context.Background(), admin.ID, i.ID, MoveItem{Version: i.Version, Before: anchor.ID}); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestDescriptionPreview(t *testing.T) {
+	long := strings.Repeat("word ", 60)
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"  Plain   text\n\nacross\tlines ", "Plain text across lines"},
+		{"# Heading\n- first\n* second\n1. third\n> quote\n- [ ] task", "Heading first second third quote task"},
+		{"```go\nfmt.Println()\n```\n-5 degrees", "fmt.Println() -5 degrees"},
+		{long, strings.TrimSpace(strings.Repeat("word ", 28)) + "…"},
+	} {
+		if got := descriptionPreview(tc.in); got != tc.want {
+			t.Errorf("descriptionPreview(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	if got := descriptionPreview(strings.Repeat("é", 500)); utf8.RuneCountInString(got) != PreviewRunes+1 || !utf8.ValidString(got) {
+		t.Fatalf("unbroken text preview: %q", got)
+	}
+}
+
+func TestListsCarryBoundedPreviews(t *testing.T) {
+	s, admin := fixture(t)
+	description := "## Goal\n\nKeep the board fast. " + strings.Repeat("Details that only the editor needs. ", 2000)
+	i, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Previewed", Description: description})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(i.Preview, "Goal Keep the board fast.") || i.Description != description {
+		t.Fatalf("created item: preview %q", i.Preview)
+	}
+	p, err := s.List(t.Context(), Filter{})
+	if err != nil || len(p.Items) != 1 {
+		t.Fatalf("list: %+v, %v", p, err)
+	}
+	if got := p.Items[0]; got.Description != "" || got.Preview != i.Preview {
+		t.Fatalf("listed item carries %d description bytes and preview %q", len(got.Description), got.Preview)
 	}
 }

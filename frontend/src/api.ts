@@ -20,6 +20,9 @@ export interface Item {
   id: string;
   title: string;
   description?: string;
+  url?: string;
+  // A short plain-text excerpt of the description, present on list and board results.
+  preview?: string;
   type: ItemType;
   status: Status;
   priority: number;
@@ -41,14 +44,22 @@ export interface Board {
 }
 export interface Activity {
   id: string;
+  item_id?: string;
+  client_id?: string;
   actor_id: string;
   kind: string;
   created_at: string;
-  data: unknown;
+  data: {
+    body?: string;
+    changes?: ItemPatch;
+    move?: { status?: Status };
+    tag?: string;
+  };
 }
 export interface ActivityPage {
   activity: Activity[];
   next_after?: string;
+  next_before?: string;
 }
 export interface Session {
   user: User;
@@ -57,10 +68,11 @@ export interface Session {
 }
 export interface Updates {
   items?: Item[];
+  activity?: Activity[];
   users?: boolean;
   reset?: boolean;
 }
-export type ItemPatch = Partial<Pick<Item, 'title' | 'description' | 'type' | 'status'>> & {
+export type ItemPatch = Partial<Pick<Item, 'title' | 'description' | 'url' | 'type' | 'status'>> & {
   add_tags?: string[];
   remove_tags?: string[];
   add_assignees?: string[];
@@ -70,6 +82,16 @@ export type NewItem = Pick<Item, 'title' | 'type' | 'status' | 'tags' | 'assigne
 export const message = (error: unknown) =>
   error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 
+// "owner/repo#42" for a GitHub or GitLab PR, otherwise the host.
+export const linkLabel = (url: string) => {
+  const pr = url.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/(?:pull|-\/merge_requests)\/(\d+)/);
+  if (pr) return `${pr[1]}#${pr[2]}`;
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
 export const label = (value: string) =>
   value.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
 export const initials = (name: string) =>

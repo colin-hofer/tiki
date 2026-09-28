@@ -303,16 +303,49 @@ func Handler(store *tiki.Store) http.Handler {
 		}
 		return store.Move(r.Context(), u.ID, id, in)
 	})
+	handle("POST /api/v1/items/{id}/comments", "write", func(r *http.Request, user tiki.User) (any, error) {
+		id, err := tiki.ParseID(r.PathValue("id"))
+		if err != nil {
+			return nil, err
+		}
+		var in tiki.CreateComment
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		return store.AddComment(r.Context(), user.ID, id, in)
+	})
 	handle("GET /api/v1/items/{id}/activity", "read", func(r *http.Request, _ tiki.User) (any, error) {
 		id, err := tiki.ParseID(r.PathValue("id"))
 		if err != nil {
 			return nil, err
 		}
-		after, limit, err := pagination(r)
-		if err != nil {
-			return nil, err
+		query := r.URL.Query()
+		limit := tiki.DefaultPageSize
+		if query.Has("limit") {
+			limit, err = strconv.Atoi(query.Get("limit"))
+			if err != nil {
+				return nil, invalid("invalid limit")
+			}
 		}
-		return store.Activity(r.Context(), id, after, limit)
+		var before tiki.ID
+		if query.Has("before") {
+			before, err = tiki.ParseID(query.Get("before"))
+			if err != nil {
+				return nil, err
+			}
+		}
+		var after *tiki.ID
+		if query.Has("after") {
+			value := tiki.ID(0)
+			if query.Get("after") != "0" {
+				value, err = tiki.ParseID(query.Get("after"))
+				if err != nil {
+					return nil, err
+				}
+			}
+			after = &value
+		}
+		return store.Activity(r.Context(), id, before, after, limit)
 	})
 	handle("GET /api/v1/tags", "read", func(r *http.Request, _ tiki.User) (any, error) {
 		limit := tiki.DefaultPageSize

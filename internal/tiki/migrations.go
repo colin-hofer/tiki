@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 4
+const schemaVersion = 7
 
 // schema.sql is the immutable version 2 baseline. Add numbered migrations and
 // increase schemaVersion for future changes; never edit an applied migration.
