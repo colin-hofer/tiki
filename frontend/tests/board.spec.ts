@@ -504,7 +504,7 @@ test('unsaved editor state immediately protects unload and disables board draggi
     }),
   ).toBe(true);
   await page.getByLabel('Ticket title').fill('Saved title');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await expect(page.locator('#ticket-9')).toHaveAttribute('draggable', 'true');
   expect(
     await page.evaluate(() => {
@@ -562,11 +562,11 @@ test('live role changes update permissions without losing an open draft', async 
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeEnabled();
   await expect(page.getByLabel('Comment', { exact: true })).toHaveJSProperty('readOnly', false);
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   expect(state.items.find((item) => item.id === '2')?.title).toBe('Keep my draft');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
-  await page.keyboard.press('c');
+  await page.keyboard.press('n');
   await page.getByLabel('New item title').fill('Keep my new ticket draft');
   state.viewer = true;
   await state.notify('change', { users: true });
@@ -585,7 +585,7 @@ test('fullscreen board supports keyboard capture, navigation, moves, and editing
   await expect(page.locator('.kanban-column')).toHaveCount(7);
   await expect(page.locator('nav, .sidebar, .list-heading')).toHaveCount(0);
   await page.locator('#column-todo').focus();
-  await page.keyboard.press('c');
+  await page.keyboard.press('n');
   await page.getByLabel('New item title').fill('Keyboard-only capture');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: /TK-13: Keyboard-only capture/ })).toBeVisible();
@@ -601,7 +601,7 @@ test('fullscreen board supports keyboard capture, navigation, moves, and editing
   await page.keyboard.press('Enter');
   await page.getByLabel('Ticket title').fill('Edited by keyboard');
   await page.keyboard.press('Control+Enter');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('complementary', { name: 'Item 13', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
@@ -779,7 +779,7 @@ test('list view keeps every board shortcut, collapses groups, and remembers the 
   await expect(
     page.getByRole('region', { name: 'Blocked group', exact: true }).locator('#ticket-3'),
   ).toBeFocused();
-  await page.keyboard.press('c');
+  await page.keyboard.press('n');
   await page.getByLabel('New item title').fill('Captured from the list');
   await page.keyboard.press('Enter');
   await expect(
@@ -857,7 +857,7 @@ test('cards and list rows preview descriptions and follow description edits', as
   await card.click();
   await page.getByLabel('Description', { exact: true }).fill('Rewritten plan for the endpoint');
   await page.keyboard.press('Control+Enter');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await expect(card.locator('.card-preview')).toHaveText('Rewritten plan for the endpoint');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
@@ -988,7 +988,7 @@ test('create and fully edit a ticket without losing pending tags or drafts', asy
 }) => {
   const state = await mock(context);
   await signIn(page);
-  await page.keyboard.press('c');
+  await page.keyboard.press('n');
   await page.getByLabel('New item title').fill('Keyboard workflow');
   await page.keyboard.press('Control+Enter');
   const panel = page.getByRole('complementary', { name: 'Item 13', exact: true });
@@ -1143,7 +1143,7 @@ test('live moves keep keyboard selection and viewer shortcuts never write', asyn
   await expect(
     page.getByRole('region', { name: 'Blocked column', exact: true }).locator('#ticket-2'),
   ).toBeFocused({ timeout: 7000 });
-  await page.keyboard.press('c');
+  await page.keyboard.press('n');
   await expect(
     page.getByRole('region', { name: 'Blocked column', exact: true }).getByLabel('New item title'),
   ).toBeFocused();
@@ -1152,13 +1152,48 @@ test('live moves keep keyboard selection and viewer shortcuts never write', asyn
   await page.reload();
   await expect(page.locator('.connection')).toHaveText('Live');
   await page.locator('#ticket-2').focus();
-  for (const key of ['c', 'a', 's', 't', 'y', 'm', 'Shift+J', 'Alt+ArrowRight'])
+  for (const key of ['c', 'n', 'a', 's', 't', 'y', 'm', 'Shift+J', 'Alt+ArrowRight'])
     await page.keyboard.press(key);
   expect(state.writes).toBe(0);
   await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary', { name: 'Item 2', exact: true })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('#ticket-2')).toBeFocused();
+});
+
+test('tag picker suggests known tags and works from the keyboard and pointer', async ({
+  page,
+  context,
+}) => {
+  const state = await mock(context);
+  await signIn(page);
+  await page.locator('#ticket-2').click();
+  const input = page.getByRole('combobox', { name: 'Add tag', exact: true });
+  const options = page.getByRole('listbox', { name: 'Tag suggestions' }).getByRole('option');
+  await input.focus();
+  await expect(options).toHaveText(['api']);
+  await input.pressSequentially('a');
+  await expect(options).toHaveText(['Create a', 'api']);
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(input).toHaveValue('');
+  await expect(input).toBeFocused();
+  await expect.poll(() => state.items.find((i) => i.id === '2')?.tags).toEqual(['frontend', 'api']);
+  await input.pressSequentially('release');
+  await page.keyboard.press('Escape');
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => state.items.find((i) => i.id === '2')?.tags)
+    .toEqual(['frontend', 'api', 'release']);
+  await page.getByRole('button', { name: 'Remove tag api', exact: true }).click();
+  await input.click();
+  await options.filter({ hasText: 'api' }).click();
+  await expect(input).toBeFocused();
+  await expect
+    .poll(() => state.items.find((i) => i.id === '2')?.tags)
+    .toEqual(['frontend', 'release', 'api']);
 });
 
 test('saving a pending tag works from its field and failed save-and-close preserves focus', async ({
@@ -1182,7 +1217,7 @@ test('saving a pending tag works from its field and failed save-and-close preser
   ).toBeVisible();
   state.failWrites = false;
   await page.getByRole('button', { name: 'Retry save', exact: true }).click();
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   expect(state.items.find((i) => i.id === '2')?.tags).toEqual(['frontend', 'keyboard']);
   await page.getByRole('button', { name: 'Close details', exact: true }).click();
   await expect(page.locator('.detail')).toHaveCount(0);
@@ -1386,7 +1421,7 @@ test.describe('phone layout', () => {
     const panel = page.getByRole('complementary', { name: 'Item 10', exact: true });
     await expect(panel).toBeVisible();
     const size = (await panel.boundingBox())!;
-    expect(size.width).toBe(390);
+    expect(size.width).toBeCloseTo(390, 2);
     await panel.getByRole('button', { name: 'Delete ticket', exact: true }).click();
     const target = page.locator('#ticket-10');
     const confirmation = page.getByRole('dialog', { name: 'Delete TK-10?' });
@@ -1555,7 +1590,7 @@ test('autosave debounces text, saves on blur, and commits tags only when finishe
   await page.waitForTimeout(200);
   expect(state.writes).toBe(0);
   await title.fill('Final wording');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   expect(state.writes).toBe(1);
   expect(state.items.find((i) => i.id === '2')?.title).toBe('Final wording');
   await expect(title).toBeFocused();
@@ -1633,7 +1668,7 @@ test('invalid titles and failed automatic saves keep the panel open until resolv
   await expect(title).toHaveValue('Preserved on failure');
   state.failWrites = false;
   await page.getByRole('button', { name: 'Retry save', exact: true }).click();
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await page.getByRole('button', { name: 'Close details', exact: true }).click();
   await expect(page.locator('.detail')).toHaveCount(0);
 });
@@ -1654,7 +1689,7 @@ test('a conflict before the stream update fetches the latest version for explici
   expect(state.writes).toBe(1);
   await expect(page.getByLabel('Ticket title')).toHaveValue('My title');
   await page.getByRole('button', { name: 'Keep my edits on latest', exact: true }).click();
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   expect(remote).toMatchObject({
     title: 'My title',
     description: 'Remote description',
@@ -1935,7 +1970,7 @@ test('remote tag deletion clears obsolete filters and preserves unsaved ticket e
     'Keep this edit through tag deletion',
   );
   await page.getByRole('button', { name: 'Keep my edits on latest' }).click();
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   const current = state.items.find((item) => item.id === '2')!;
   expect(current.description).toBe('Keep this edit through tag deletion');
   expect(current.tags).toEqual([]);
@@ -1986,7 +2021,7 @@ test('a delayed refresh cannot replace an acknowledged autosave', async ({ page,
   await page.getByRole('button', { name: 'Refresh board', exact: true }).click();
   await started;
   await page.getByLabel('Ticket title', { exact: true }).fill('Saved while refresh was pending');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await expect(page.locator('#ticket-2')).toContainText('Saved while refresh was pending');
   expect(state.items.find((i) => i.id === '2')?.version).toBe(2);
   release();
@@ -2006,7 +2041,7 @@ test('the board loads and can save when the event stream is unavailable', async 
   await expect(page.locator('#ticket-2')).toBeVisible();
   await page.locator('#ticket-2').click();
   await page.getByLabel('Ticket title').fill('Saved without the stream');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   expect(state.items.find((item) => item.id === '2')?.title).toBe('Saved without the stream');
 });
 

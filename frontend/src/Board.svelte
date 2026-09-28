@@ -661,7 +661,7 @@
 </div>
 <div class="board-footer" id="board-keyboard-hint">
   <span><kbd>↑ ↓ ← →</kbd> / <kbd>h j k l</kbd> navigate</span><span><kbd>Enter</kbd> open</span
-  >{#if !readonly}<span><kbd>C</kbd> create</span>{/if}<span
+  >{#if !readonly}<span><kbd>C</kbd> comment</span><span><kbd>N</kbd> create</span>{/if}<span
     class="board-feedback"
     role="status"
     aria-live="polite">{moving ? 'Updating…' : announcement}</span
@@ -670,7 +670,7 @@
 {#if !readonly && !openId && !(mobile && quick.status)}<button
     class="fab"
     aria-label="New"
-    title="New ticket (C)"
+    title="New ticket (N)"
     onclick={() => oncreate(mobile ? feedStatus : activeColumn)}
     ><Icon name="plus" size={22} strokeWidth={2} /></button
   >{/if}

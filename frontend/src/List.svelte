@@ -427,7 +427,7 @@
   <span><kbd>↑ ↓</kbd> / <kbd>j k</kbd> navigate</span><span
     ><kbd>← →</kbd> / <kbd>h l</kbd> group header · rows</span
   ><span><kbd>Alt ↑ ↓</kbd> reorder · change status</span><span><kbd>Enter</kbd> open</span
-  >{#if !readonly}<span><kbd>C</kbd> create</span>{/if}<span
+  >{#if !readonly}<span><kbd>C</kbd> comment</span><span><kbd>N</kbd> create</span>{/if}<span
     class="board-feedback"
     role="status"
     aria-live="polite">{moving ? 'Updating…' : announcement}</span
@@ -436,7 +436,7 @@
 {#if !readonly && !openId && !quick.status}<button
     class="fab"
     aria-label="New"
-    title="New ticket (C)"
+    title="New ticket (N)"
     onclick={() => {
       if (collapsed.has(activeColumn)) toggle(activeColumn);
       void oncreate(activeColumn);

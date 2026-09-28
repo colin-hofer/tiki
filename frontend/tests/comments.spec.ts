@@ -49,6 +49,52 @@ async function open(page: Page, item: Item) {
   await expect(page.getByText('Loading activity…')).toHaveCount(0);
 }
 
+for (const view of ['board', 'list']) {
+  test(`${view}: C jumps to comments and N creates, without intercepting typing`, async ({
+    page,
+    request,
+  }) => {
+    const item = await create(request);
+    for (let i = 0; i < 12; i++)
+      await post(request, item, `Message ${i}\nSome context for the conversation.\nA second line.`);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(`**/items/${item.id}/activity?*`, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.goto(`/?view=${view}`);
+    await page.locator(`#ticket-${item.id}`).focus();
+    await page.keyboard.press('c');
+    const composer = page.getByLabel('Comment', { exact: true });
+    try {
+      await expect(composer).toBeFocused();
+      await expect(page.getByText('Loading activity…')).toBeVisible();
+    } finally {
+      release();
+    }
+    await expect(page.locator('.comment-content p').last()).toContainText('Message 11');
+    await expect(page.locator('.comment-content p').last()).toBeInViewport();
+    await expect(composer).toBeFocused();
+    await page.keyboard.type('cn');
+    await expect(composer).toHaveValue('cn');
+    await expect(page.getByLabel('New item title')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('c');
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue('cn');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('n');
+    await expect(page.getByLabel('New item title')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.locator(`#ticket-${item.id}`).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Ticket title', { exact: true })).toBeFocused();
+    await expect(composer).toHaveValue('cn');
+  });
+}
+
 test('ticket changes and comments share one ordered live timeline', async ({ page, request }) => {
   const item = await create(request);
   await post(request, item, 'Starting work');

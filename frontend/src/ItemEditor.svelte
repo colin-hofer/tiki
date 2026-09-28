@@ -4,6 +4,7 @@
   import type { Item, ItemPatch, User } from './api';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
+  import TagInput from './TagInput.svelte';
   import ItemTimeline from './ItemTimeline.svelte';
   import type { TimelineState } from './timeline.svelte';
   import type { EditorField } from './item-edit';
@@ -73,6 +74,23 @@
   let conflict = $derived(Boolean(!saving && item.version > base.version && dirty));
   let canWrite = $derived(!readonly && !deleted);
   const usersById = $derived(new Map(users.map((user) => [user.id, user])));
+  // The footer only speaks up when something needs attention; routine saves are silent.
+  const notice = $derived(
+    deleted
+      ? 'Ticket deleted'
+      : readonly
+        ? 'Read-only access'
+        : conflict
+          ? 'Resolve changes to save'
+          : error
+            ? 'Not saved'
+            : !draft.title.trim()
+              ? 'Add a title to save'
+              : '',
+  );
+  const saveState = $derived(
+    saving ? 'saving' : error || conflict ? 'error' : dirty ? 'dirty' : 'saved',
+  );
   const commentTooLong = $derived(
     new TextEncoder().encode(timeline.draft?.text.trim() || '').length > 16 * 1024,
   );
@@ -175,6 +193,15 @@
     }
   }
 
+  // Finish a jump to comments when the initial history arrives after the ticket.
+  $effect(() => {
+    if (timeline.loaded)
+      untrack(() => {
+        if (document.activeElement?.matches('.comment-composer textarea'))
+          void conversationView?.bottom();
+      });
+  });
+
   export function focus(field?: EditorField) {
     if (!field) {
       panel.focus();
@@ -184,6 +211,7 @@
       title: 'Ticket title',
       description: 'Description',
       link: 'Link',
+      comment: 'Comment',
       status: 'Ticket status',
       type: 'Ticket type',
       assignee: 'Add assignee',
@@ -193,6 +221,7 @@
       field === 'description' ? '#description' : `[aria-label="${labels[field]}"]`,
     );
     control?.focus();
+    if (field === 'comment') void conversationView?.bottom();
     if (
       control?.getAttribute('role') === 'combobox' &&
       control.getAttribute('aria-expanded') !== 'true'
@@ -273,7 +302,13 @@
 
 <svelte:window onkeydown={editorKey} />
 
-<aside class="detail" tabindex="-1" bind:this={panel} aria-label={`Item ${item.id}`}>
+<aside
+  class="detail"
+  tabindex="-1"
+  bind:this={panel}
+  aria-label={`Item ${item.id}`}
+  data-save-state={saveState}
+>
   <div class="detail-top">
     <span class="detail-id"><span class="item-id">TK-{item.id}</span></span>
     <div class="button-row">
@@ -459,38 +494,16 @@
                       ><Icon name="close" size={12} /></button
                     >{/if}</span
                 >{/each}
-              {#if canWrite}<div class="tag-entry">
-                  <input
-                    aria-label="Add tag"
-                    placeholder="+ Add tag"
-                    list="known-tags"
-                    maxlength="64"
-                    bind:value={tagInput}
-                    onblur={() => {
-                      if (!composing && tagInput.trim()) addTag();
-                    }}
-                    onkeydown={(event) => {
-                      if (
-                        event.key === 'Enter' &&
-                        !event.ctrlKey &&
-                        !event.metaKey &&
-                        !event.isComposing
-                      ) {
-                        event.preventDefault();
-                        addTag();
-                      }
-                    }}
-                  /><button
-                    type="button"
-                    class="icon-button"
-                    aria-label="Apply tag"
-                    disabled={!tagInput.trim()}
-                    onclick={addTag}><Icon name="plus" size={13} /></button
-                  >
-                </div>
-                <datalist id="known-tags"
-                  >{#each tags as tag}<option value={tag}></option>{/each}</datalist
-                >{:else if !draft.tags.length}<span class="muted">No tags</span>{/if}
+              {#if canWrite}<TagInput
+                  label="Add tag"
+                  bind:value={tagInput}
+                  {tags}
+                  exclude={draft.tags}
+                  onadd={addTag}
+                  onblur={() => {
+                    if (!composing && tagInput.trim()) addTag();
+                  }}
+                />{:else if !draft.tags.length}<span class="muted">No tags</span>{/if}
             </div>
           </div>
           <div class="property">
@@ -521,6 +534,18 @@
                 />{:else if !draft.url}<span class="muted">No link</span>{/if}
             </div>
           </div>
+          <div class="property">
+            <span>Created</span>
+            <div class="property-values property-text">
+              <time datetime={base.created_at} title={new Date(base.created_at).toLocaleString()}
+                >{new Date(base.created_at).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })}</time
+              >
+            </div>
+          </div>
         </div>
         <div class="section-label"><label for="description">Description</label></div>
         <textarea
@@ -543,54 +568,31 @@
         {deleted}
         {suspended}
       />
-      <div class="detail-meta">
-        Created {new Date(base.created_at).toLocaleDateString(undefined, {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })}<span>TK-{base.id}</span>
-      </div>
     </div>
-    <div class="editor-footer">
-      {#if unreadEvents}<button
-          type="button"
-          class="small-button"
-          onclick={() => conversationView?.bottom()}>New events ↓</button
-        >{/if}
-      <span class:unsaved={dirty || saving} class="save-state" role="status" aria-live="polite"
-        ><span class="tiny-dot" aria-hidden="true"></span>{deleted
-          ? 'Ticket deleted'
-          : saving
-            ? 'Saving…'
-            : readonly
-              ? 'Read-only access'
-              : conflict
-                ? 'Resolve changes to save'
-                : error
-                  ? 'Not saved'
-                  : !draft.title.trim()
-                    ? 'Add a title to save'
-                    : changed
-                      ? 'Saving soon…'
-                      : tagInput.trim()
-                        ? 'Press Enter to add tag'
-                        : 'All changes saved'}</span
-      >
-      {#if canWrite && (error || conflict)}<div class="button-row">
-          <button
+    {#if unreadEvents || notice || (canWrite && (error || conflict))}<div class="editor-footer">
+        {#if unreadEvents}<button
             type="button"
-            class="text-button"
-            disabled={saving}
-            onclick={() => fill(item.version >= base.version ? item : base)}
-            >Discard unsaved changes</button
-          >{#if error && !conflict}<button
+            class="small-button"
+            onclick={() => conversationView?.bottom()}>New events ↓</button
+          >{/if}
+        {#if notice}<span class="save-state unsaved" role="status"
+            ><span class="tiny-dot" aria-hidden="true"></span>{notice}</span
+          >{/if}
+        {#if canWrite && (error || conflict)}<div class="button-row">
+            <button
               type="button"
-              class="small-button"
+              class="text-button"
               disabled={saving}
-              onclick={() => void flush(true)}>Retry save</button
-            >{/if}
-        </div>{/if}
-    </div>
+              onclick={() => fill(item.version >= base.version ? item : base)}
+              >Discard unsaved changes</button
+            >{#if error && !conflict}<button
+                type="button"
+                class="small-button"
+                disabled={saving}
+                onclick={() => void flush(true)}>Retry save</button
+              >{/if}
+          </div>{/if}
+      </div>{/if}
     {#if canWrite || timeline.draft?.text}
       <form
         class="comment-composer"
@@ -602,7 +604,7 @@
         <div class="comment-input">
           <textarea
             aria-label="Comment"
-            aria-describedby="comment-hint"
+            aria-describedby={commentTooLong ? 'comment-hint' : undefined}
             placeholder="Message…"
             rows="1"
             value={timeline.draft?.text || ''}
@@ -625,11 +627,9 @@
             ><Icon name="up" size={15} strokeWidth={2.25} /></button
           >
         </div>
-        <span id="comment-hint" class="comment-hint" class:danger-text={commentTooLong}
-          >{commentTooLong
-            ? 'Comment exceeds 16 KiB'
-            : 'Enter to send · Shift+Enter for a new line'}</span
-        >
+        {#if commentTooLong}<span id="comment-hint" class="comment-hint" role="status"
+            >Comment exceeds 16 KiB</span
+          >{/if}
       </form>
     {/if}
   </div>

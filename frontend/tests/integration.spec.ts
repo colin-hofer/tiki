@@ -40,7 +40,7 @@ test('real Go API: sign in, autosave, atomic move, live update, and reload', asy
   const link = 'https://github.com/colin-hofer/tiki/pull/3';
   await page.getByLabel('Link', { exact: true }).fill(link);
   await page.getByLabel('Ticket title', { exact: true }).fill('Saved through the browser');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await page.getByRole('button', { name: 'Close details', exact: true }).click();
   const before: Item = await (await request.get(`/api/v1/items/${item.id}`, { headers })).json();
   expect(before.title).toBe('Saved through the browser');
@@ -79,7 +79,7 @@ test('real Go API: sign in, autosave, atomic move, live update, and reload', asy
     link,
   );
   await page.getByLabel('Link', { exact: true }).fill('');
-  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   const cleared: Item = await (await request.get(`/api/v1/items/${item.id}`, { headers })).json();
   expect(cleared.url).toBeUndefined();
   await expect(page.locator(`#ticket-${item.id} .card-link`)).toHaveCount(0);

@@ -129,7 +129,7 @@
     if (!document.activeElement?.closest('.detail, .toolbar')) board.focusBoard();
   }
   let actions = $derived([
-    ...(!readonly ? [{ id: 'new', label: 'Create a ticket', hint: 'C', run: () => create() }] : []),
+    ...(!readonly ? [{ id: 'new', label: 'Create a ticket', hint: 'N', run: () => create() }] : []),
     { id: 'search', label: 'Search loaded tickets', hint: '/', run: () => toolbar.focusSearch() },
     {
       id: 'view',
@@ -167,6 +167,12 @@
       : []),
     ...(!readonly && selected
       ? [
+          {
+            id: 'comment',
+            label: 'Comment on ticket',
+            hint: 'C',
+            run: () => void editSelected('comment'),
+          },
           {
             id: 'edit',
             label: 'Edit ticket title',
@@ -598,11 +604,11 @@
       void requestDelete(target.closest('.detail') ? ticket.item : selected);
       return;
     }
-    if (!event.altKey && ['/', 'c', '?', 'r', 'v'].includes(key)) {
+    if (!event.altKey && ['/', 'n', '?', 'r', 'v'].includes(key)) {
       event.preventDefault();
       if (key === 'v' && !event.repeat) void setLayout(layout === 'list' ? 'board' : 'list');
       if (key === '/') void toolbar.focusSearch(true);
-      if (key === 'c' && !event.repeat) void create();
+      if (key === 'n' && !event.repeat) void create();
       if (key === '?') void showHelp();
       if (key === 'r') void data.refresh();
       return;
@@ -610,10 +616,11 @@
     if (
       !event.altKey &&
       !event.shiftKey &&
-      ['e', 'i', 'd', 'a', 's', 't', 'y', 'm'].includes(key)
+      ['c', 'e', 'i', 'd', 'a', 's', 't', 'y', 'm'].includes(key)
     ) {
       event.preventDefault();
       if (event.repeat || readonly) return;
+      if (key === 'c') void editSelected('comment');
       if (key === 'e' || key === 'i') void editSelected();
       if (key === 'd') void editSelected('description');
       if (key === 'm') assignMe();

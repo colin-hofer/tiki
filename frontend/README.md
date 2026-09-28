@@ -53,7 +53,8 @@ The board keeps one ticket in the Tab order; arrows move between tickets without
 | First / last loaded ticket in column       | Home / End or gg / G                  |
 | Jump to a visible column                   | 1–7                                   |
 | Open ticket                                | Enter                                 |
-| Create in current column                   | C                                     |
+| Open ticket and focus comments             | C                                     |
+| Create in current column                   | N                                     |
 | Edit title / description                   | E or I / D                            |
 | Assign / assign or unassign yourself       | A / M                                 |
 | Change status / tags / type                | S / T / Y                             |

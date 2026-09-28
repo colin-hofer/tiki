@@ -4,6 +4,7 @@ export type EditorField =
   | 'title'
   | 'description'
   | 'link'
+  | 'comment'
   | 'status'
   | 'assignee'
   | 'tags'
