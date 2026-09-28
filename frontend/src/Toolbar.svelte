@@ -10,6 +10,8 @@
     user,
     mobile,
     readonly,
+    view,
+    onview,
     accountOpen,
     query = $bindable(''),
     onfilters,
@@ -26,6 +28,8 @@
     user: User;
     mobile: boolean;
     readonly: boolean;
+    view: 'board' | 'list';
+    onview: (view: 'board' | 'list') => void;
     accountOpen: boolean;
     query?: string;
     onfilters: () => void;
@@ -153,9 +157,18 @@
       >{/if}
   </div>
   <span class="toolbar-spacer"></span>
-  {#if data.orderChanged}<button
-      class="text-button order-notice"
-      onclick={() => data.refresh({ order: true })}>Apply order</button
+  <div class="view-switch" role="group" aria-label="Layout">
+    {#each [{ id: 'board', label: 'Board view' }, { id: 'list', label: 'List view' }] as const as option}<button
+        class="icon-button"
+        class:active={view === option.id}
+        aria-label={option.label}
+        aria-pressed={view === option.id}
+        title={`${option.label} (V)`}
+        onclick={() => onview(option.id)}><Icon name={option.id} size={16} /></button
+      >{/each}
+  </div>
+  {#if data.orderChanged}<button class="text-button order-notice" onclick={() => data.applyOrder()}
+      >Apply order</button
     >{/if}
   <span
     class={`connection ${data.connection}`}
@@ -186,7 +199,7 @@
     aria-label="Refresh board"
     title="Refresh (R)"
     disabled={data.busy}
-    onclick={() => data.refresh({ order: true })}><Icon name="refresh" size={15} /></button
+    onclick={() => data.refresh()}><Icon name="refresh" size={15} /></button
   >
   {#if user.role === 'admin'}<button
       class="icon-button"

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 const testPassword = "correct horse battery staple"
@@ -344,5 +345,42 @@ func BenchmarkCreateAndMove(b *testing.B) {
 		if _, err = s.Move(context.Background(), admin.ID, i.ID, MoveItem{Version: i.Version, Before: anchor.ID}); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestDescriptionPreview(t *testing.T) {
+	long := strings.Repeat("word ", 60)
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"  Plain   text\n\nacross\tlines ", "Plain text across lines"},
+		{"# Heading\n- first\n* second\n1. third\n> quote\n- [ ] task", "Heading first second third quote task"},
+		{"```go\nfmt.Println()\n```\n-5 degrees", "fmt.Println() -5 degrees"},
+		{long, strings.TrimSpace(strings.Repeat("word ", 28)) + "…"},
+	} {
+		if got := descriptionPreview(tc.in); got != tc.want {
+			t.Errorf("descriptionPreview(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	if got := descriptionPreview(strings.Repeat("é", 500)); utf8.RuneCountInString(got) != PreviewRunes+1 || !utf8.ValidString(got) {
+		t.Fatalf("unbroken text preview: %q", got)
+	}
+}
+
+func TestListsCarryBoundedPreviews(t *testing.T) {
+	s, admin := fixture(t)
+	description := "## Goal\n\nKeep the board fast. " + strings.Repeat("Details that only the editor needs. ", 2000)
+	i, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Previewed", Description: description})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(i.Preview, "Goal Keep the board fast.") || i.Description != description {
+		t.Fatalf("created item: preview %q", i.Preview)
+	}
+	p, err := s.List(t.Context(), Filter{})
+	if err != nil || len(p.Items) != 1 {
+		t.Fatalf("list: %+v, %v", p, err)
+	}
+	if got := p.Items[0]; got.Description != "" || got.Preview != i.Preview {
+		t.Fatalf("listed item carries %d description bytes and preview %q", len(got.Description), got.Preview)
 	}
 }
