@@ -64,11 +64,15 @@
   let dropBefore = $state(true);
   let board = $state<HTMLElement>(null!);
   let tabStrip = $state<HTMLElement>(null!);
-  let feedStatus = $state<Status>('todo');
+  let requestedFeedStatus = $state<Status>('todo');
+  const feedStatus = $derived(
+    columns.includes(requestedFeedStatus) ? requestedFeedStatus : columns[0],
+  );
   let feedReady = false;
   let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number } | undefined;
   let suppressClick = false;
 
+  // Capture the old layout and repair keyboard focus when filtering or live updates change rows.
   $effect.pre(() => {
     const rows = visible;
     const availableColumns = columns;
@@ -94,19 +98,17 @@
     const drag = stopDrag();
     drag?.ghost.remove();
   });
+  // Wait for both the mobile layout and the first data load before positioning the feed.
   $effect(() => {
     if (!mobile || !hasLoaded || !board || feedReady) return;
     feedReady = true;
-    void tick().then(() =>
-      showStatus(columns.includes(activeColumn) ? activeColumn : columns[0], true),
-    );
+    untrack(() => showStatus(columns.includes(activeColumn) ? activeColumn : columns[0], true));
   });
+  // Scrolling the tab strip requires its rendered dimensions.
   $effect(() => {
-    if (!columns.includes(feedStatus) && columns[0]) feedStatus = columns[0];
-  });
-  $effect(() => {
-    const tab = tabStrip?.querySelector<HTMLElement>(`[data-status="${feedStatus}"]`);
-    if (tab && mobile)
+    if (!mobile || !tabStrip) return;
+    const tab = tabStrip.querySelector<HTMLElement>(`[data-status="${feedStatus}"]`);
+    if (tab)
       tabStrip.scrollTo({
         left: tab.offsetLeft - (tabStrip.clientWidth - tab.offsetWidth) / 2,
         behavior: duration(1) ? 'smooth' : 'instant',
@@ -122,8 +124,8 @@
       if (status === scrollingTo.status || Date.now() > scrollingTo.until) scrollingTo = null;
       else return;
     }
-    if (status && status !== feedStatus) {
-      feedStatus = status;
+    if (status && status !== requestedFeedStatus) {
+      requestedFeedStatus = status;
       activeColumn = status;
     }
   }
@@ -133,7 +135,7 @@
     const smooth = !instant && Boolean(duration(1));
     scrollingTo = smooth ? { status, until: Date.now() + 800 } : null;
     board.scrollTo({ left: index * board.clientWidth, behavior: smooth ? 'smooth' : 'instant' });
-    feedStatus = status;
+    requestedFeedStatus = status;
     activeColumn = status;
   }
   // Touch: press and hold lifts a card. Drag up/down to reorder, to a screen edge or status tab to change status, release to drop.

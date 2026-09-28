@@ -873,6 +873,35 @@ test('pushed tickets enter and leave a filtered view without list requests', asy
 test.describe('phone layout', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
+  test('filtering out the active feed status selects the remaining tab for quick create', async ({
+    page,
+    context,
+  }) => {
+    const state = await mock(context);
+    await signIn(page);
+    const tabs = page.getByRole('group', { name: 'Statuses' });
+    await expect(tabs.getByRole('button', { name: /^Todo/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    await expect(page.locator('#ticket-2')).toBeInViewport();
+    await page.getByRole('button', { name: 'Filters', exact: true }).click();
+    await page.getByLabel('Filter status').click();
+    await page.getByRole('option', { name: 'Complete', exact: true }).click();
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(tabs.getByRole('button')).toHaveCount(1);
+    await expect(tabs.getByRole('button', { name: /^Complete/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    await page.getByRole('button', { name: 'New', exact: true }).click();
+    await page.getByLabel('New item title').fill('Created in the filtered feed');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect
+      .poll(() => state.items.find((item) => item.title === 'Created in the filtered feed')?.status)
+      .toBe('complete');
+  });
+
   test('status tabs, floating create, full-page tickets and delete', async ({ page, context }) => {
     const state = await mock(context);
     await signIn(page);
