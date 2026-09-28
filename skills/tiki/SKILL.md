@@ -20,7 +20,7 @@ tiki --json auth status
 
 Honor an explicitly selected server and carry `--server URL` through subsequent commands. Otherwise use the saved configuration. Server precedence is flag, `TIKI_SERVER`, saved config/session, then loopback. Do not change global configuration just for one task. Reuse known context until the server or credentials change.
 
-Use the user's or repository's tag conventions; do not infer a repository tag from its folder name. `repo/tiki` below is an example, not a universal default. Resolve user IDs through `auth status` or `user list`; the CLI accepts an ID or `none`, not `--assignee me`.
+Use the user's or repository's tag conventions; do not infer a repository tag from its folder name. `repo/tiki` below is an example, not a universal default. Assignee flags accept a user ID, `me` for the signed-in user, or `none` on `item list` for unassigned items. Resolve other people's IDs through `user list`.
 
 Use `--json` before the subcommand. Successful data goes to stdout; structured errors go to stderr. Capture the exit code and both streams. Inspect `tiki item --help` or a subcommand's help when installed capabilities differ. Help remains human-readable even with `--json`.
 
@@ -31,8 +31,9 @@ If authentication is missing or expired, report that sign-in is needed. When an 
 Examples use illustrative IDs and tags; substitute values actually returned by Tiki. Run only the operations relevant to the request.
 
 ```sh
-tiki --json item list --tag repo/tiki --status todo --limit 20
+tiki --json item list --tag repo/tiki --status todo --assignee me --limit 20
 tiki --json item list --tag repo/tiki --assignee none --limit 20
+tiki --json item list --query 'keyboard focus' --limit 20
 tiki --json item get 123
 tiki --json item activity 123 --limit 20
 tiki --json user list --limit 50
@@ -43,7 +44,7 @@ tiki --json tag list --limit 50
 - Lists return `items` and optional `next_cursor`. Continue with `--cursor` and the same filters. Users, tags, and activity return `next_after`, continued with `--after`. Stop when the cursor is absent or the task has enough information. A partial page is not proof that no match exists.
 - Pages default to 50 and cap at 200. Pagination is live: concurrent moves can shift results. Deduplicate by ID when collecting multiple pages.
 - Repeated `--tag` filters use AND. Tags are trimmed/lowercased. IDs are decimal strings in JSON; preserve them without floating-point conversion.
-- Item lists are priority-ordered, not newest-first. Full-text search is not currently available. For a title lookup, inspect bounded filtered pages and report incomplete coverage rather than claiming a global absence.
+- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items whose title contains every word, case-insensitively; it does not search descriptions. Before creating a ticket, run two or three short `--query` variants to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
 
 ## Create and edit
 
@@ -91,6 +92,8 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/activity. Comment creation, full-text search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity includes ticket changes and comments; the CLI cannot post comments. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
+The CLI currently provides item create/get/list/update/move/activity. Comment creation, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity includes ticket changes and comments; the CLI cannot post comments. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
 
-Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent ticket URLs, successful writes, or completion evidence.
+Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent successful writes or completion evidence.
+
+A ticket's web page is `SERVER/?item=ID`, where SERVER is the effective server from `config show` without a trailing slash, for example `https://tiki.example.com/?item=123`. Use exactly this form when linking a ticket from a pull request or report; do not guess any other path.

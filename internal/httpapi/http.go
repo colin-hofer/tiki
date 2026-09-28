@@ -393,7 +393,7 @@ func Handler(store *tiki.Store) http.Handler {
 
 func itemFilter(r *http.Request) (tiki.Filter, error) {
 	q := r.URL.Query()
-	f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Cursor: q.Get("cursor")}
+	f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Query: q.Get("query"), Cursor: q.Get("cursor")}
 	var err error
 	if q.Has("limit") {
 		f.Limit, err = strconv.Atoi(q.Get("limit"))

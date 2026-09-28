@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,10 +82,21 @@ func TestEmailPasswordCLIFlow(t *testing.T) {
 	if !strings.Contains(out.String(), "removed_at") {
 		t.Fatal("CLI did not report removed access")
 	}
-	invoke(0, "", "item", "create", "--title", "Logged in", "--json")
 	var user tiki.User
 	if err = json.Unmarshal([]byte(invoke(0, "", "auth", "status", "--json")), &user); err != nil || user.Email != "admin@example.test" {
 		t.Fatal("wrong signed-in identity")
+	}
+	// "me" resolves to the signed-in user on create, update, and list.
+	var mine tiki.Item
+	if err = json.Unmarshal([]byte(invoke(0, "", "item", "create", "--title", "Logged in", "--assignee", "me", "--json")), &mine); err != nil || !slices.Equal(mine.Assignees, []tiki.ID{user.ID}) {
+		t.Fatalf("--assignee me: %+v, %v", mine, err)
+	}
+	var page tiki.Page
+	if err = json.Unmarshal([]byte(invoke(0, "", "item", "list", "--assignee", "me", "--json")), &page); err != nil || len(page.Items) != 1 {
+		t.Fatalf("list --assignee me: %+v, %v", page, err)
+	}
+	if err = json.Unmarshal([]byte(invoke(0, "", "item", "update", mine.ID.String(), "--remove-assignee", "me", "--json")), &mine); err != nil || len(mine.Assignees) != 0 {
+		t.Fatalf("--remove-assignee me: %+v, %v", mine, err)
 	}
 	path, err := sessionPath()
 	if err != nil {
