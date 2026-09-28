@@ -4,7 +4,14 @@ A Go CLI and shared HTTP server for tracking work. Items have a sortable `float6
 
 ## Agent skill
 
-The reusable [Tiki skill](skills/tiki/SKILL.md) teaches agents the current CLI, explicit-version edits, pagination, and recovery from conflicts or uncertain writes. Install the `skills/tiki` directory in your agent's skill directory; for Codex, use `$CODEX_HOME/skills` (default `~/.codex/skills`) and invoke `$tiki`. It uses your installed CLI and authenticated workspace.
+The [Tiki skill](skills/tiki/SKILL.md) is a small entry point that tells your agent to run `tiki skill`. The CLI prints its embedded [instructions](skills/instructions.md), covering commands, explicit-version edits, pagination, and recovery from uncertain writes. Updating the CLI updates those instructions automatically; installed skills need no separate refresh.
+
+- `tiki skill install` installs to `~/.agents/skills/tiki` for agents that read the shared skills directory.
+- `tiki skill install --project` installs into the repository's `.agents/skills/tiki`, ready to commit for teammates. Outside a Git repository, it uses the current directory.
+- `tiki skill install --dir PATH` installs into `PATH/tiki` instead. For example, use `--dir ~/.claude/skills` for Claude Code, or `--dir .claude/skills` for a project skill. `--dir` and `--project` are mutually exclusive.
+- For any agent that can execute commands, add “For Tiki ticket work, run `tiki skill` first” to its instructions. Native skill support is optional.
+
+Installation is local and needs no sign-in or network access. It replaces the chosen `SKILL.md` atomically; rerunning it is harmless. Linked skills are left untouched. `--json` returns `path` and `updated`. There is no harness detection, linking, or legacy migration. Install in the environment where your agent runs; a local home-directory skill is not automatically available to remote agents. Ticket work uses that environment's installed CLI and saved sign-in.
 
 ## Local development
 
@@ -75,7 +82,7 @@ Login with `--server URL` also saves that address. Selection order is `--server`
 
 ## Install the CLI and agent skill
 
-Open **CLI & agents** in the web toolbar, or **Install CLI & agent skill** in the command menu. The **CLI** tab offers separate install and sign-in commands for the current workspace; the **Agent skill** tab installs the Tiki skill for Codex. Every role can use both tabs. For example:
+Open **CLI & agents** in the web toolbar, or **Install CLI & agent skill** in the command menu. The **CLI** tab offers separate install and sign-in commands for the current workspace; the **Agent skill** tab installs the Tiki skill for your coding agents. Every role can use both tabs. For example:
 
 ```sh
 curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com'
@@ -97,13 +104,13 @@ The server's bundled CLI is authoritative, even if it is older than your install
 
 `make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` builds only the local API; run `make cli` when testing installer downloads, which Vite serves through its existing API proxy. Run it again after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
 
-To install just the agent skill, including when the CLI is already installed:
+After installing the CLI, install the agent skill:
 
 ```sh
-curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com' --skill
+tiki skill install
 ```
 
-This installs the bundled `SKILL.md` to `${CODEX_HOME:-$HOME/.codex}/skills/tiki`, verifies its checksum, and replaces an existing downloaded copy only after a successful download. Linked skills are left untouched; update their source instead. The skill uses the CLI and your saved sign-in. Invoke `$tiki` in Codex; start a new session if it has not appeared. The skill tab also links to the instructions for inspection or manual installation in another agent. Skill downloads work even when this server has no CLI binaries. `make dev` rebuilds the API when the skill changes; production embeds it at build time.
+Then ask your agent about Tiki tickets; start a new session if the skill does not appear. The skill tab includes project and custom-directory commands and a link to read or download `SKILL.md` for manual installation. If an old CLI lacks `tiki skill`, update it first. Earlier skill copies can be deleted and reinstalled in your agent's current skills directory. `make dev` rebuilds the API when files under `skills/` change; production embeds them at build time.
 
 ## Invite your team
 
@@ -205,9 +212,9 @@ Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `se
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/cli` | Available CLI platforms. |
-| GET | `/api/v1/cli/install.sh` | Public shell installer; `--skill` installs only the Codex skill. |
+| GET | `/api/v1/cli/install.sh` | Public CLI shell installer. |
 | GET | `/api/v1/cli/downloads/{platform}.gz` | Public compressed CLI; `{platform}.sha256` contains its checksum. |
-| GET | `/api/v1/skills/tiki/SKILL.md` | Public bundled agent skill; `SKILL.md.sha256` contains its checksum. |
+| GET | `/api/v1/skills/tiki/SKILL.md` | Public agent skill entry point for manual installation. |
 | POST | `/api/v1/auth/login` | Sign in with email/password. |
 | GET / PATCH | `/api/v1/auth/me` | Get the signed-in user / update only their name with `{"name":"New Name"}` (1–200 UTF-8 bytes after trimming). |
 | POST | `/api/v1/auth/logout` | Revoke the current session. |

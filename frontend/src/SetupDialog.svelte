@@ -13,7 +13,6 @@
   let copied = $state('');
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const command = `curl -fsS ${quote(`${location.origin}/api/v1/cli/install.sh`)} | sh -s -- ${quote(location.origin)}`;
-  const skillCommand = `${command} --skill`;
   let login = $derived(
     `tiki auth login --server ${quote(location.origin)} --email ${quote(email || 'you@example.com')}`,
   );
@@ -144,12 +143,32 @@
         tabindex="0"
         hidden={tab !== 'skill'}
       >
-        <h3>Install the <code>$tiki</code> skill for Codex</h3>
-        {@render commandBox(skillCommand, 'skill', 'Skill install command', 2)}
+        <h3>Install the Tiki skill for your coding agents</h3>
+        {@render commandBox('tiki skill install', 'skill', 'Skill install command', 1)}
         <p class="note">
-          To <code>~/.codex/skills/tiki</code> · run again to update · uses your CLI sign-in
+          Requires the Tiki CLI · installs to <code>~/.agents/skills/tiki</code> · uses your CLI sign-in
         </p>
-        <p class="example">Then ask: “Use <code>$tiki</code> to find my todo tickets.”</p>
+        <p class="example">Then ask your agent: “Find my todo Tiki tickets.”</p>
+        <p class="note">
+          Agent without skills? Tell it to run <code>tiki skill</code> before ticket work.
+        </p>
+        <details>
+          <summary>Project or another skills directory</summary>
+          <p class="note">Install in this repository and commit it for your team:</p>
+          {@render commandBox(
+            'tiki skill install --project',
+            'project',
+            'Project skill install command',
+            1,
+          )}
+          <p class="note">Use your agent's skills directory, for example Claude Code:</p>
+          {@render commandBox(
+            'tiki skill install --dir ~/.claude/skills',
+            'directory',
+            'Custom skill install command',
+            2,
+          )}
+        </details>
         <p class="links">
           <button class="text-button" onclick={() => selectTab('cli')}>Set up CLI</button><a
             href="/api/v1/skills/tiki/SKILL.md"
@@ -210,9 +229,6 @@
   h3:not(:first-child) {
     margin-top: 14px;
   }
-  h3:has(code) {
-    display: block;
-  }
   .step {
     display: inline-grid;
     place-items: center;
@@ -228,6 +244,14 @@
   }
   .example {
     margin-top: 12px;
+  }
+  details {
+    margin-top: 12px;
+  }
+  summary {
+    cursor: pointer;
+    color: var(--text-2);
+    font-size: 11px;
   }
   .unavailable {
     display: flex;

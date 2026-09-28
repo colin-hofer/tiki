@@ -78,7 +78,9 @@ test('CLI and skill setup copy workspace commands without exposing a session', a
   );
   await expect(dialog.getByRole('tabpanel', { name: 'CLI', exact: true })).toBeHidden();
   await dialog.getByRole('button', { name: 'Copy Skill install command', exact: true }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${command} --skill`);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('tiki skill install');
+  await expect(dialog).toContainText('~/.agents/skills/tiki');
+  await expect(dialog).toContainText('tiki skill');
   await expect(dialog.getByRole('link', { name: 'Read SKILL.md' })).toHaveAttribute(
     'href',
     '/api/v1/skills/tiki/SKILL.md',
@@ -87,6 +89,19 @@ test('CLI and skill setup copy workspace commands without exposing a session', a
     path: testInfo.outputPath('setup-skill-desktop.png'),
     animations: 'disabled',
   });
+  await dialog.getByText('Project or another skills directory', { exact: true }).click();
+  await dialog
+    .getByRole('button', { name: 'Copy Project skill install command', exact: true })
+    .click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'tiki skill install --project',
+  );
+  await dialog
+    .getByRole('button', { name: 'Copy Custom skill install command', exact: true })
+    .click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'tiki skill install --dir ~/.claude/skills',
+  );
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -109,7 +124,11 @@ test('mobile setup keeps the skill available without CLI binaries', async ({
   await expect(dialog.getByRole('button', { name: 'Copy skill install command' })).toBeVisible();
   await expect(
     dialog.getByRole('textbox', { name: 'Skill install command', exact: true }),
-  ).toHaveValue(/ --skill$/);
+  ).toHaveValue('tiki skill install');
+  await dialog.getByText('Project or another skills directory', { exact: true }).click();
+  await expect(
+    dialog.getByRole('button', { name: 'Copy Custom skill install command', exact: true }),
+  ).toBeVisible();
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({
     path: testInfo.outputPath('setup-skill-mobile.png'),

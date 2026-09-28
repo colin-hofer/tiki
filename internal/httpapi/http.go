@@ -36,7 +36,7 @@ func Handler(store *tiki.Store) http.Handler {
 	mux.Handle("/", frontend.Handler())
 	registerDownloads(mux, downloads())
 	methods := make(map[string][]string)
-	for _, path := range []string{"/api/v1/cli", "/api/v1/cli/install.sh", "/api/v1/cli/downloads/", "/api/v1/skills/tiki/SKILL.md", "/api/v1/skills/tiki/SKILL.md.sha256"} {
+	for _, path := range []string{"/api/v1/cli", "/api/v1/cli/install.sh", "/api/v1/cli/downloads/", "/api/v1/skills/tiki/SKILL.md"} {
 		methods[path] = []string{http.MethodGet, http.MethodHead}
 	}
 	// Streams manage their own deadlines and authentication lifetime.

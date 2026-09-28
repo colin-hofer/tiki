@@ -117,7 +117,7 @@ export function devAPI(port: number): Plugin {
         if (
           closing ||
           !['add', 'change', 'unlink'].includes(event) ||
-          !/(?:\.(?:go|sql|sh)|[/\\]go\.(?:mod|sum)|[/\\]skills[/\\]tiki[/\\]SKILL\.md)$/.test(file)
+          !/(?:\.(?:go|sql|sh)|[/\\]go\.(?:mod|sum)|[/\\]skills[/\\].*\.md)$/.test(file)
         )
           return;
         clearTimeout(timer);

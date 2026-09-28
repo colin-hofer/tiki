@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"crypto/sha256"
 	_ "embed"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -21,10 +19,6 @@ func registerDownloads(mux *http.ServeMux, files fs.FS) {
 	mux.HandleFunc("GET /api/v1/skills/tiki/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		http.ServeContent(w, r, "SKILL.md", time.Time{}, strings.NewReader(skills.Tiki))
-	})
-	mux.HandleFunc("GET /api/v1/skills/tiki/SKILL.md.sha256", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		http.ServeContent(w, r, "SKILL.md.sha256", time.Time{}, strings.NewReader(fmt.Sprintf("%x\n", sha256.Sum256([]byte(skills.Tiki)))))
 	})
 	mux.HandleFunc("GET /api/v1/cli", func(w http.ResponseWriter, r *http.Request) {
 		platforms := []string{}
