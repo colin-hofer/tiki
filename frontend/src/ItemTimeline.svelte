@@ -3,6 +3,7 @@
   import { avatarHue, initials, label } from './api';
   import type { User, Activity } from './api';
   import type { TimelineState } from './timeline.svelte';
+  import { activityKey } from './timeline.svelte';
 
   let {
     conversation,
@@ -163,7 +164,7 @@
     aria-relevant="additions"
     aria-busy={conversation.loading && !conversation.loaded}
   >
-    {#each conversation.events as event, i (event.id)}
+    {#each conversation.events as event, i (activityKey(event))}
       {@const own = event.actor_id === conversation.userId}
       {@const previous = conversation.events[i - 1]}
       {@const next = conversation.events[i + 1] ?? (own ? pendingHead : undefined)}

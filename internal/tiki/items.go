@@ -309,7 +309,7 @@ func (s *Store) Update(ctx context.Context, actor, id ID, in UpdateItem) (Item, 
 		if err != nil {
 			return err
 		}
-		return event(ctx, tx, actor, id, "item.updated", map[string]any{"changes": in, "version": out.Version})
+		return editEvent(ctx, tx, actor, id, in, out.Version)
 	})
 	return out, err
 }

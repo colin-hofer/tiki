@@ -142,6 +142,97 @@ test('ticket changes and comments share one ordered live timeline', async ({ pag
   expect(reads).toEqual(historyReads);
 });
 
+test('autosaved descriptions update one activity entry live and after reconnecting', async ({
+  page,
+  context,
+  request,
+}) => {
+  const item = await create(request);
+  await open(page, item);
+  const second = await context.newPage();
+  await open(second, item);
+  await expect(second.locator('.connection')).toHaveText('Live');
+  const description = page.getByRole('textbox', { name: 'Description', exact: true });
+  const edits = (client: Page) =>
+    client.locator('.timeline-event').filter({ hasText: 'updated the description' });
+  let previous = '';
+  for (let n = 0; n < 3; n++) {
+    await description.fill(`Autosaved draft ${n}`);
+    await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
+    await expect(second.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue(
+      `Autosaved draft ${n}`,
+    );
+    await expect(edits(page)).toHaveCount(1);
+    await expect(edits(second)).toHaveCount(1);
+    await expect(edits(second)).not.toHaveAttribute('data-activity-id', previous);
+    previous = (await edits(second).getAttribute('data-activity-id'))!;
+  }
+  // This tab misses several replacements of an event it already knows.
+  await second.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(second.locator('.connection')).toHaveText('Paused');
+  for (let n = 3; n < 6; n++) {
+    await description.fill(`Autosaved draft ${n}`);
+    await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
+    await expect(edits(page)).not.toHaveAttribute('data-activity-id', previous);
+    previous = (await edits(page).getAttribute('data-activity-id'))!;
+  }
+  await second.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(second.locator('.connection')).toHaveText('Live');
+  await expect(edits(second)).toHaveCount(1);
+  await expect(edits(second)).toHaveAttribute('data-activity-id', previous);
+  expect((await history(request, item)).activity).toHaveLength(2);
+
+  // Comments split editing bursts and retain their place in the conversation.
+  await post(request, item, 'Feedback between drafts');
+  await expect(page.locator('.comment')).toHaveCount(1);
+  await description.fill('Revised after feedback');
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
+  await expect(edits(second)).toHaveCount(2);
+  await second.reload();
+  const rows = second.locator('.comment-log > .comment, .comment-log > .timeline-event');
+  await expect(rows).toHaveCount(4);
+  await expect(rows.nth(1)).toContainText('updated the description');
+  await expect(rows.nth(2)).toContainText('Feedback between drafts');
+  await expect(rows.nth(3)).toContainText('updated the description');
+});
+
+test('older history cannot restore an edit superseded by live activity', async ({ page }) => {
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { TimelineState } = await import('../src/timeline.svelte.ts');
+    const edit = (id: string, group_id?: string) => ({
+      id,
+      item_id: '90002',
+      actor_id: '2',
+      kind: 'item.updated',
+      data: { changes: { description: `Draft ${id}` }, group_id },
+      created_at: new Date().toISOString(),
+    });
+    const timeline = new TimelineState('1', () => {});
+    timeline.id = '90002';
+    timeline.accept([edit('10')]);
+    timeline.accept([edit('30', '10')]); // Missed an intermediate save.
+    timeline.accept([edit('10'), edit('20', '10')]); // Delayed history page.
+    timeline.accept([edit('40', '10')]);
+    const first = timeline.events;
+    // The same merge must work when the newest event arrives before history.
+    timeline.events = [];
+    timeline.accept([edit('40', '10')]);
+    timeline.accept([edit('10'), edit('30', '10')]);
+    return { first, second: timeline.events };
+  });
+  expect(result.first).toHaveLength(1);
+  expect(result.first[0].id).toBe('40');
+  expect(result.first[0].data.changes?.description).toBe('Draft 40');
+  expect(result.second).toEqual(result.first);
+});
+
 test('comments arrive in two clients, reconcile stream before POST, and leave the editor independent', async ({
   page,
   context,

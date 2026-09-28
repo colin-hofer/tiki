@@ -1529,8 +1529,29 @@ test.describe('phone layout', () => {
     await expect(column.locator('.card').first()).toHaveAttribute('id', 'ticket-10');
     await expect(page.locator('.card-ghost')).toHaveCount(0);
 
-    // Holding at the right edge switches to the next status; dropping there changes status.
-    await drag('10', () => ({ clientX: 386, clientY: 200 }), 700);
+    // Once lifted, both edges name the neighbouring statuses.
+    const card = page.locator('#ticket-10');
+    const lift = (await card.boundingBox())!;
+    await card.dispatchEvent('pointerdown', { ...touch, clientX: 30, clientY: lift.y + 20 });
+    await expect(page.locator('.drag-edge')).toHaveCount(2);
+    await expect(page.locator('.drag-edge').first()).toContainText('Todo');
+    await expect(page.locator('.drag-edge.right')).toContainText('Code review');
+    // A card lifted inside the left zone can reorder there without changing status.
+    await page
+      .locator('body')
+      .dispatchEvent('pointermove', { ...touch, clientX: 34, clientY: lift.y + 60 });
+    await page.waitForTimeout(500);
+    await expect(page.locator('.drag-edge.active')).toHaveCount(0);
+    await expect(tabs.getByRole('button', { name: /^In progress/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    await page.locator('body').dispatchEvent('pointercancel', { ...touch });
+    await expect(page.locator('.drag-edge')).toHaveCount(0);
+    await expect(page.locator('.card-ghost')).toHaveCount(0);
+
+    // The edge zone is a fifth of the screen wide: holding well short of the edge switches status; dropping there changes it.
+    await drag('10', () => ({ clientX: 320, clientY: 200 }), 700);
     await expect.poll(() => state.items.find((i) => i.id === '10')?.status).toBe('code_review');
     await expect(tabs.getByRole('button', { name: /^Code review/ })).toHaveAttribute(
       'aria-current',

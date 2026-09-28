@@ -10,6 +10,7 @@ export type PendingComment = {
 };
 type Draft = { text: string; pending: PendingComment[] };
 const compare = (a: Activity, b: Activity) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+export const activityKey = (event: Activity) => event.data.group_id || event.id;
 
 // History belongs to the open ticket; drafts and uncertain sends survive ticket
 // navigation and reloads. Only an explicit send/retry can post a message.
@@ -106,9 +107,18 @@ export class TimelineState {
     }
     const incoming = events.filter((event) => event.item_id === this.id);
     if (!incoming.length) return;
-    const merged = new Map(this.events.map((event) => [event.id, event]));
-    for (const event of incoming) merged.set(event.id, event);
-    if (merged.size === this.events.length) return;
+    const merged = new Map(this.events.map((event) => [activityKey(event), event]));
+    let changed = false;
+    for (const event of incoming) {
+      const key = activityKey(event);
+      const previous = merged.get(key);
+      // A history response can arrive after a newer replacement over SSE.
+      if (!previous || BigInt(event.id) > BigInt(previous.id)) {
+        merged.set(key, event);
+        changed = true;
+      }
+    }
+    if (!changed) return;
     this.events = [...merged.values()].sort(compare);
   }
 

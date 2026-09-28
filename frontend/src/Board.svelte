@@ -138,8 +138,8 @@
     requestedFeedStatus = status;
     activeColumn = status;
   }
-  // Touch: press and hold lifts a card. Drag up/down to reorder, to a screen edge or status tab to change status, release to drop.
-  // Native drag and drop is unavailable on touch screens.
+  // Touch: press and hold lifts a card. Drag up/down to reorder, into an edge zone or onto a status tab to change status, release to drop.
+  // On the wide layout the column under the finger is the target. Native drag and drop is unavailable on touch screens.
   type TouchDrag = {
     item: Item;
     ghost: HTMLElement;
@@ -156,6 +156,16 @@
   };
   let lifted = $state<TouchDrag | null>(null);
   let dragFrame = 0;
+  // Status the lifted card will land in, and the edge zone (-1 left, 1 right) it is dwelling in.
+  let dropStatus = $state<Status>('todo');
+  let edge = $state(0);
+  let edgeRound = $state(0);
+  let edgeDwell = $state(0);
+  let edgeTop = $state(0);
+  const edgeHold = 300;
+  const edgeRepeat = 650;
+  // A generous zone: about a fifth of the screen on each side.
+  const edgeZone = () => Math.round(Math.min(96, Math.max(56, innerWidth * 0.22)));
   function pressStart(event: PointerEvent, item: Item) {
     suppressClick = false;
     if (event.pointerType !== 'touch' || readonly || moving || lifted) return;
@@ -203,6 +213,9 @@
       easing: 'cubic-bezier(.2, .8, .2, 1)',
     });
     selectedId = item.id;
+    dropStatus = mobile ? feedStatus : item.status;
+    edge = 0;
+    edgeTop = board?.getBoundingClientRect().top || 0;
     lifted = {
       item,
       ghost,
@@ -235,12 +248,21 @@
     lifted.ghost.style.transform = `translate(${lifted.x - lifted.dx - parseFloat(lifted.ghost.style.left)}px, ${lifted.y - lifted.dy - parseFloat(lifted.ghost.style.top)}px) scale(1.03) rotate(-1deg)`;
     placeDrop();
   }
-  function feedColumn() {
-    return board?.querySelector<HTMLElement>(`[data-column="${feedStatus}"]`);
+  function dropColumn() {
+    return board?.querySelector<HTMLElement>(`[data-column="${dropStatus}"]`);
   }
   function placeDrop() {
     if (!lifted) return;
-    const cards = [...(feedColumn()?.querySelectorAll<HTMLElement>('[data-card]') || [])].filter(
+    if (mobile) dropStatus = feedStatus;
+    else {
+      // Each column's full width, header to footer, accepts the card.
+      const under = [...board.querySelectorAll<HTMLElement>('[data-column]')].find((node) => {
+        const r = node.getBoundingClientRect();
+        return lifted!.x >= r.left && lifted!.x < r.right;
+      });
+      if (under) dropStatus = under.dataset.column as Status;
+    }
+    const cards = [...(dropColumn()?.querySelectorAll<HTMLElement>('[data-card]') || [])].filter(
       (node) => node.dataset.card !== lifted!.item.id,
     );
     const next = cards.find((node) => {
@@ -255,7 +277,7 @@
     if (!lifted) return;
     const { x, y } = lifted;
     // Auto-scroll the column near its top and bottom edges.
-    const scroller = feedColumn()?.querySelector<HTMLElement>('.column-scroll');
+    const scroller = dropColumn()?.querySelector<HTMLElement>('.column-scroll');
     if (scroller && lifted.moved) {
       const r = scroller.getBoundingClientRect();
       const speed =
@@ -278,19 +300,48 @@
       lifted.tabSince = now;
       void tick().then(placeDrop);
     }
-    const edge = !tab && lifted.moved ? (x < 28 ? -1 : x > innerWidth - 28 ? 1 : 0) : 0;
-    if (!edge) lifted.edgeSince = 0;
-    else if (!lifted.edgeSince) lifted.edgeSince = now;
-    else if (now - lifted.edgeSince > 380) {
-      const status = columns[columns.indexOf(feedStatus) + edge];
-      if (status) {
-        showStatus(status);
-        navigator.vibrate?.(6);
-        void tick().then(placeDrop);
+    if (mobile) dwellEdge(now, tab);
+    else if (lifted.moved) {
+      // The wide layout scrolls the board sideways near its edges.
+      const r = board.getBoundingClientRect();
+      const speed =
+        x < r.left + 48 ? -(r.left + 48 - x) / 3 : x > r.right - 48 ? (x - (r.right - 48)) / 3 : 0;
+      if (speed) {
+        board.scrollLeft += Math.max(-16, Math.min(16, speed));
+        placeDrop();
       }
-      lifted.edgeSince = now + 320;
     }
     dragFrame = requestAnimationFrame(dragTick);
+  }
+  function dwellEdge(now: number, tab: string) {
+    if (!lifted) return;
+    const { x, startX } = lifted;
+    const zone = edgeZone();
+    const inside = (side: number) => (side < 0 ? x < zone : x > innerWidth - zone);
+    const side = x < zone ? -1 : x > innerWidth - zone ? 1 : 0;
+    // A card lifted inside a zone must travel toward that edge first, so vertical reordering near the edge stays put.
+    const armed =
+      side &&
+      (!(side < 0 ? startX < zone : startX > innerWidth - zone) || (x - startX) * side > 16);
+    const next =
+      !tab && lifted.moved && armed && inside(side) && columns[columns.indexOf(feedStatus) + side]
+        ? side
+        : 0;
+    if (next !== edge) {
+      edge = next;
+      lifted.edgeSince = now;
+      edgeDwell = edgeHold;
+      edgeRound++;
+    } else if (edge && now - lifted.edgeSince > edgeDwell) {
+      showStatus(columns[columns.indexOf(feedStatus) + edge]);
+      navigator.vibrate?.(6);
+      void tick().then(placeDrop);
+      // Holding on keeps stepping through statuses, a little slower than the first step.
+      lifted.edgeSince = now;
+      edgeDwell = edgeRepeat;
+      edgeRound++;
+      if (!columns[columns.indexOf(feedStatus) + edge]) edge = 0;
+    }
   }
   function stopDrag() {
     cancelAnimationFrame(dragFrame);
@@ -301,6 +352,7 @@
     const drag = lifted;
     lifted = null;
     dropTarget = '';
+    edge = 0;
     return drag;
   }
   function settle(ghost: HTMLElement) {
@@ -324,7 +376,7 @@
     const drag = stopDrag();
     if (!drag) return;
     const { item, ghost } = drag;
-    const status = feedStatus;
+    const status = dropStatus;
     if (!drag.moved && status === item.status) {
       settle(ghost);
       return;
@@ -470,7 +522,8 @@
     <section
       data-column={status}
       class="kanban-column"
-      class:drop-target={dragging && data.itemsById.get(dragging)?.status !== status}
+      class:drop-target={(dragging && data.itemsById.get(dragging)?.status !== status) ||
+        (lifted && !mobile && dropStatus === status && lifted.item.status !== status)}
       aria-label={`${label(status)} column`}
       ondragover={(event) => {
         if (dragging && !readonly) event.preventDefault();
@@ -659,6 +712,31 @@
     </section>
   {/each}
 </div>
+{#if lifted && mobile}
+  {@const index = columns.indexOf(feedStatus)}
+  <!-- Touch-only affordance: the tabs and the editor offer the same status change. -->
+  {#each [-1, 1] as side (side)}
+    {@const status = columns[index + side]}
+    {#if status}<div
+        class="drag-edge"
+        class:right={side > 0}
+        class:active={edge === side}
+        style:top={`${edgeTop}px`}
+        style:--zone={`${edgeZone()}px`}
+        aria-hidden="true"
+      >
+        <span class="drag-edge-tab"
+          ><Icon name={side < 0 ? 'back' : 'arrow'} size={14} /><span
+            class={`status-icon ${status}`}><Icon name={status} size={14} /></span
+          ><span class="drag-edge-label">{label(status)}</span
+          >{#if edge === side}{#key edgeRound}<span
+                class="drag-edge-fill"
+                style:animation-duration={`${edgeDwell}ms`}
+              ></span>{/key}{/if}</span
+        >
+      </div>{/if}
+  {/each}
+{/if}
 <div class="board-footer" id="board-keyboard-hint">
   <span><kbd>↑ ↓ ← →</kbd> / <kbd>h j k l</kbd> navigate</span><span><kbd>Enter</kbd> open</span
   >{#if !readonly}<span><kbd>C</kbd> comment</span><span><kbd>N</kbd> create</span>{/if}<span

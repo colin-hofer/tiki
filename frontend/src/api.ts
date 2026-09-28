@@ -50,6 +50,7 @@ export interface Activity {
   kind: string;
   created_at: string;
   data: {
+    group_id?: string;
     body?: string;
     changes?: ItemPatch;
     move?: { status?: Status };

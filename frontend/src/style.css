@@ -2761,3 +2761,102 @@ dialog[open]::backdrop {
   min-height: 36px;
   padding: 8px 20px;
 }
+
+/* Touch drag edge zones: each side names the neighbouring status and fills while the card dwells there.
+   They sit above the lifted card so the target stays visible under the thumb. */
+.drag-edge {
+  --tint: color-mix(in srgb, var(--primary) 7%, transparent);
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 31;
+  width: var(--zone);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 6px;
+  pointer-events: none;
+  background: linear-gradient(to right, var(--tint), transparent);
+  animation: drag-edge-in 0.18s ease-out;
+}
+.drag-edge.right {
+  left: auto;
+  right: 0;
+  justify-content: flex-end;
+  padding: 0 6px 0 0;
+  background: linear-gradient(to left, var(--tint), transparent);
+}
+.drag-edge.active {
+  --tint: color-mix(in srgb, var(--primary) 20%, transparent);
+}
+.drag-edge-tab {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 5px;
+  border-radius: 14px;
+  color: var(--text-2);
+  background: var(--surface);
+  box-shadow:
+    0 6px 18px #00000038,
+    0 0 0 1px var(--line-strong);
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.16s;
+}
+.drag-edge.active .drag-edge-tab {
+  color: var(--text);
+  transform: scale(1.08) translateX(4px);
+}
+.drag-edge.right.active .drag-edge-tab {
+  transform: scale(1.08) translateX(-4px);
+}
+.drag-edge-label {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.drag-edge:not(.right) .drag-edge-label {
+  transform: rotate(180deg);
+}
+.drag-edge-fill {
+  position: absolute;
+  inset: auto 0 0;
+  height: 100%;
+  z-index: -1;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  transform-origin: bottom;
+  animation: drag-edge-fill linear forwards;
+}
+.drag-edge-tab > :not(.drag-edge-fill) {
+  position: relative;
+}
+@keyframes drag-edge-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes drag-edge-fill {
+  from {
+    transform: scaleY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drag-edge,
+  .drag-edge-tab {
+    animation: none;
+    transition: none;
+  }
+  .drag-edge.active .drag-edge-tab {
+    transform: none;
+    color: var(--text);
+    box-shadow:
+      0 6px 18px #00000038,
+      0 0 0 2px var(--primary);
+  }
+}

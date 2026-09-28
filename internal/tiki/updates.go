@@ -30,7 +30,7 @@ func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, er
 		return out, err
 	}
 	defer tx.Rollback()
-	// Preserve all timeline events; only the current ticket snapshots coalesce.
+	// Return current timeline entries, including replacements for text edits.
 	rows, err := tx.QueryContext(ctx, "SELECT "+activityColumns+" FROM activity WHERE id>? AND id<=? ORDER BY id LIMIT 65", after.Activity, until.Activity)
 	if err != nil {
 		return out, err

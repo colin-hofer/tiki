@@ -146,7 +146,12 @@ func TestActivityPaginationBoundsLargeDescriptions(t *testing.T) {
 	description := strings.Repeat("<", 256*1024)
 	for range 4 {
 		var err error
-		i, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, Description: &description})
+		// Include a discrete change so these remain separate history entries.
+		status := StatusTodo
+		if i.Status == status {
+			status = StatusBacklog
+		}
+		i, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, Description: &description, Status: &status})
 		if err != nil {
 			t.Fatal(err)
 		}
