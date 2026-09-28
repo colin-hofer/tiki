@@ -97,6 +97,6 @@ func (a *app) command() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.server, "server", "", "Server URL (overrides TIKI_SERVER and saved config)")
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit JSON without prompts")
 	root.PersistentFlags().DurationVar(&a.timeout, "timeout", 10*time.Second, "API request timeout")
-	root.AddCommand(a.initCommand(), a.serveCommand(), a.authCommand(), a.configCommand(), a.inviteCommand(), a.userCommand(), a.itemCommand(), a.tagCommand())
+	root.AddCommand(a.initCommand(), a.serveCommand(), a.authCommand(), a.configCommand(), a.updateCommand(), a.inviteCommand(), a.userCommand(), a.itemCommand(), a.tagCommand())
 	return root
 }

@@ -82,7 +82,18 @@ curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://t
 tiki auth login --email you@example.com
 ```
 
-The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Run the command again to upgrade. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
+The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
+
+Update an installed CLI to the version bundled with your configured server:
+
+```sh
+tiki update
+tiki update --server https://tiki.example.com  # override the source for this update
+```
+
+Updates need no active login and preserve saved configuration and credentials. The command verifies the download's checksum, unpacks it, and atomically replaces the running executable at its existing location, following symlinks and preserving file permissions. Its directory must be writable. Failed downloads or verification leave the installed CLI intact; identical binaries report “already up to date.” Downloads time out after five minutes by default; override with `--timeout 10m`. `--json` returns `updated`, `path`, and `server`.
+
+The server's bundled CLI is authoritative, even if it is older than your installed copy. Full server and development builds refuse self-updates; rebuild or redeploy those normally. If your installed CLI predates `tiki update`, rerun the installer once to get the command.
 
 `make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` builds only the local API; run `make cli` when testing installer downloads, which Vite serves through its existing API proxy. Run it again after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
 

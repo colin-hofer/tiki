@@ -14,7 +14,7 @@ fi
 for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
     # The dev tag excludes the UI/download bundles, avoiding recursive embeds.
     # A stable output path lets Go reuse its linked binary as well as packages.
-    CGO_ENABLED=0 GOOS=${platform%-*} GOARCH=${platform#*-} go build -tags dev -trimpath -buildvcs=false -ldflags='-s -w' -o "$cache/$platform" .
+    CGO_ENABLED=0 GOOS=${platform%-*} GOARCH=${platform#*-} go build -tags dev -trimpath -buildvcs=false -ldflags='-s -w -X tiki/internal/cli.standaloneCLI=true' -o "$cache/$platform" .
     source_hash=$($checksum < "$cache/$platform")
     source_hash=${source_hash%% *}
     if [ -f "$cache/$platform.sha256" ] &&
