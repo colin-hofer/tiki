@@ -468,6 +468,18 @@ kbd {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+.card-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  margin-top: -6px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
 .card-meta {
   display: flex;
   align-items: center;
@@ -1075,6 +1087,182 @@ button.danger-text {
   margin: 0;
 }
 
+/* List view: status groups of single-line rows */
+.view-switch {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  margin-right: 4px;
+  border-radius: 7px;
+  background: var(--chip);
+}
+.view-switch .icon-button.active {
+  color: var(--text);
+  background: var(--active);
+}
+.list-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 0 8px 72px;
+}
+.list-group {
+  border-radius: 8px;
+  transition: background-color 0.12s;
+}
+.list-group.drop-target {
+  background: var(--hover);
+}
+.group-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 4px 0 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.list-group.drop-target .group-header {
+  background: color-mix(in srgb, var(--bg), var(--text) 4%);
+}
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  border-radius: 6px;
+}
+.group-toggle:hover {
+  background: var(--hover);
+}
+.group-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--focus);
+}
+.group-header h2 {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text);
+}
+.group-chevron {
+  display: inline-flex;
+  color: var(--text-3);
+  transition: transform 0.14s;
+}
+.group-chevron.open {
+  transform: rotate(90deg);
+}
+.list-group:hover .column-add,
+.list-group:focus-within .column-add {
+  opacity: 1;
+}
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 6px;
+}
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 8px;
+  text-align: left;
+  border-radius: 6px;
+  scroll-margin: 44px 0 8px;
+  transition: background-color 0.12s;
+}
+.row:hover,
+.row.selected {
+  background: var(--hover);
+}
+.row.opened {
+  background: var(--active);
+}
+.row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--focus);
+}
+.row[draggable='true'] {
+  cursor: grab;
+}
+.row .item-id {
+  flex-shrink: 0;
+  min-width: 32px;
+}
+.row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+}
+.row-title {
+  flex-shrink: 0;
+  max-width: 70%;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-preview {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-tags {
+  flex-shrink: 1;
+  max-width: 30%;
+  margin-left: 0;
+}
+.row .card-assignees {
+  min-width: 36px;
+  justify-content: flex-end;
+  margin-left: 0;
+}
+.row .card-assignees .mini-avatar + .mini-avatar {
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.row.drop-before::before,
+.row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--focus);
+  border-radius: 2px;
+}
+.row.drop-before::before {
+  top: -1px;
+}
+.row.drop-after::after {
+  bottom: -1px;
+}
+.list-view .column-empty {
+  padding: 8px 0 12px 30px;
+}
+.list-create {
+  margin: 6px 0;
+}
+.list-view .load-more {
+  margin: 0 0 8px;
+}
+
 /* Responsive */
 @media (min-width: 1800px) {
   .kanban-column {
@@ -1602,6 +1790,79 @@ dialog[open]::backdrop {
     color: var(--text-3);
   }
 
+  .view-switch {
+    padding: 0;
+    margin: 0;
+    background: none;
+  }
+  .view-switch .icon-button.active {
+    display: none;
+  }
+  .list-view {
+    padding: 0 0 calc(96px + env(safe-area-inset-bottom));
+    scrollbar-gutter: auto;
+  }
+  .list-group {
+    border-radius: 0;
+  }
+  .group-header {
+    height: 48px;
+    padding: 0 8px 0 10px;
+  }
+  .group-toggle {
+    height: 40px;
+    padding: 0 10px 0 6px;
+    border-radius: 10px;
+  }
+  .group-header h2 {
+    font-size: 14px;
+  }
+  .group-header .column-add {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+  .rows {
+    padding: 0;
+  }
+  .row {
+    height: auto;
+    min-height: 52px;
+    gap: 12px;
+    padding: 8px 16px;
+    border-radius: 0;
+    border-bottom: 1px solid var(--line);
+    scroll-margin: 52px 0 96px;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .row-text {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .row-title {
+    max-width: none;
+    font-size: 15px;
+  }
+  .row-preview {
+    font-size: 13px;
+  }
+  .row-tags {
+    display: none;
+  }
+  .row .card-assignees {
+    min-width: 0;
+  }
+  .list-view .column-empty {
+    padding: 16px 16px 20px 46px;
+    text-align: left;
+  }
+  .list-view .load-more {
+    margin: 0;
+    border-radius: 0;
+  }
   .board {
     gap: 0;
     padding: 0;
@@ -1638,6 +1899,9 @@ dialog[open]::backdrop {
   }
   .card-title {
     font-size: 15px;
+  }
+  .card-preview {
+    font-size: 13px;
   }
   .card-tags > span {
     font-size: 12px;

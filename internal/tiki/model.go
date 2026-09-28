@@ -96,6 +96,7 @@ type Item struct {
 	Priority    float64  `json:"priority"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
+	Preview     string   `json:"preview,omitempty"`
 	CreatedBy   ID       `json:"created_by"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`

@@ -20,6 +20,8 @@ export interface Item {
   id: string;
   title: string;
   description?: string;
+  // A short plain-text excerpt of the description, present on list and board results.
+  preview?: string;
   type: ItemType;
   status: Status;
   priority: number;

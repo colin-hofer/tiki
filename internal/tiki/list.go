@@ -90,8 +90,8 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		where = append(where, "(i.priority,i.id)>(?,?)")
 		args = append(args, c.Priority, c.ID)
 	}
-	args = append(args, f.Limit+1)
-	rows, err := tx.QueryContext(ctx, "SELECT "+itemColumns+",'' FROM items i WHERE "+strings.Join(where, " AND ")+" ORDER BY i.priority,i.id LIMIT ?", args...)
+	args = append([]any{previewSource}, append(args, f.Limit+1)...)
+	rows, err := tx.QueryContext(ctx, "SELECT "+itemColumns+",substr(i.description,1,?) FROM items i WHERE "+strings.Join(where, " AND ")+" ORDER BY i.priority,i.id LIMIT ?", args...)
 	if err != nil {
 		return out, err
 	}
@@ -101,6 +101,8 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		if err != nil {
 			return out, err
 		}
+		// Lists carry only the excerpt; the full description is read per item.
+		i.Description = ""
 		out.Items = append(out.Items, i)
 	}
 	if err = rows.Err(); err != nil {

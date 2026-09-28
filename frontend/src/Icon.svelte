@@ -39,6 +39,8 @@
     Trash2,
     KeyRound,
     Copy,
+    SquareKanban,
+    List,
   } from '@lucide/svelte';
 
   let {
@@ -76,6 +78,8 @@
     trash: Trash2,
     key: KeyRound,
     copy: Copy,
+    board: SquareKanban,
+    list: List,
     // Statuses
     backlog: CircleDashed,
     todo: Circle,

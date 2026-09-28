@@ -7,6 +7,7 @@
   import { BoardState } from './board.svelte';
   import { groupItems } from './items';
   import Board from './Board.svelte';
+  import List from './List.svelte';
   import Toolbar from './Toolbar.svelte';
   import Icon from './Icon.svelte';
   import ItemEditor from './ItemEditor.svelte';
@@ -48,6 +49,10 @@
   let activeColumn = $state<Status>('todo');
   let query = $state(initialURL.searchParams.get('q') || '');
   let quick = $state<{ status: Status | null; title: string }>({ status: null, title: '' });
+  type View = 'board' | 'list';
+  const viewKey = 'tiki.view';
+  const isView = (value: unknown): value is View => value === 'board' || value === 'list';
+  let layout = $state<View>(readView());
   let creating = $state(false);
   let announcement = $state('');
   const narrow = new MediaQuery('(max-width: 700px)');
@@ -63,7 +68,7 @@
   let palette = $state<Menu | null>(null);
   let menuItem = $state<Item | null>(null);
   let paletteReturn: HTMLElement | null = null;
-  let board: Board;
+  let board = $state<Board | List>(null!);
   let toolbar: Toolbar;
   let editor = $state<ItemEditor>();
   const dirty = $derived(Boolean(ticket.id && editor?.hasUnsavedChanges()));
@@ -100,9 +105,38 @@
     void data.filters.tag;
     untrack(() => updateURL());
   });
+  function readView(): View {
+    const requested = initialURL.searchParams.get('view');
+    if (isView(requested)) return requested;
+    try {
+      const saved = localStorage.getItem(viewKey);
+      return isView(saved) ? saved : 'board';
+    } catch {
+      return 'board';
+    }
+  }
+  async function setLayout(next: View) {
+    if (layout === next) return;
+    layout = next;
+    try {
+      localStorage.setItem(viewKey, next);
+    } catch {
+      // The layout choice still applies to this tab and its URL.
+    }
+    updateURL();
+    announcement = next === 'list' ? 'List view' : 'Board view';
+    await tick();
+    if (!document.activeElement?.closest('.detail, .toolbar')) board.focusBoard();
+  }
   let actions = $derived([
     ...(!readonly ? [{ id: 'new', label: 'Create a ticket', hint: 'C', run: () => create() }] : []),
     { id: 'search', label: 'Search loaded tickets', hint: '/', run: () => toolbar.focusSearch() },
+    {
+      id: 'view',
+      label: layout === 'list' ? 'Switch to board view' : 'Switch to list view',
+      hint: 'V',
+      run: () => void setLayout(layout === 'list' ? 'board' : 'list'),
+    },
     { id: 'all', label: 'Clear all filters', run: clearFilters },
     { id: 'mine', label: 'Filter: assigned to me', run: () => setView('', user?.id || '') },
     {
@@ -175,7 +209,7 @@
       : []),
     ...columns.map((status, index) => ({
       id: `column-${status}`,
-      label: `Go to ${label(status)} column`,
+      label: `Go to ${label(status)} ${layout === 'list' ? 'group' : 'column'}`,
       hint: String(index + 1),
       run: () => board.focusColumn(status),
     })),
@@ -299,6 +333,7 @@
       tag: data.filters.tag,
       assignee: data.filters.assignee,
       item: ticket.id,
+      view: layout === 'list' ? 'list' : '',
     })) {
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
@@ -557,14 +592,15 @@
       !event.altKey &&
       !event.shiftKey &&
       !event.repeat &&
-      (target.closest('.detail, .board') || target === document.body)
+      (target.closest('.detail, .board, .list-view') || target === document.body)
     ) {
       event.preventDefault();
       void requestDelete(target.closest('.detail') ? ticket.item : selected);
       return;
     }
-    if (!event.altKey && ['/', 'c', '?', 'r'].includes(key)) {
+    if (!event.altKey && ['/', 'c', '?', 'r', 'v'].includes(key)) {
       event.preventDefault();
+      if (key === 'v' && !event.repeat) void setLayout(layout === 'list' ? 'board' : 'list');
       if (key === '/') void toolbar.focusSearch(true);
       if (key === 'c' && !event.repeat) void create();
       if (key === '?') void showHelp();
@@ -634,6 +670,8 @@
       assignee: url.searchParams.get('assignee') || '',
     };
     const id = url.searchParams.get('item') || '';
+    const requested = url.searchParams.get('view');
+    layout = isView(requested) ? requested : 'board';
     quick.status = null;
     if (id !== ticket.id) {
       selectedId = id;
@@ -662,6 +700,8 @@
     {user}
     {mobile}
     {readonly}
+    view={layout}
+    onview={setLayout}
     bind:query
     accountOpen={modal === 'account'}
     onfilters={filterChanged}
@@ -690,29 +730,52 @@
       >
     </div>
   {/if}
-  <Board
-    bind:this={board}
-    {data}
-    {visible}
-    {grouped}
-    {query}
-    {readonly}
-    {dirty}
-    {mobile}
-    {coarse}
-    bind:selectedId
-    bind:activeColumn
-    bind:quick
-    {creating}
-    {announcement}
-    onopen={openItem}
-    oncreate={create}
-    onquickcreate={quickCreate}
-    onmove={moveTo}
-    onstatus={changeStatus}
-    {guardDraft}
-    onhelp={showHelp}
-  />
+  {#if layout === 'list'}
+    <List
+      bind:this={board}
+      {data}
+      {grouped}
+      {query}
+      {readonly}
+      {dirty}
+      {coarse}
+      bind:selectedId
+      bind:activeColumn
+      bind:quick
+      {creating}
+      {announcement}
+      onopen={openItem}
+      oncreate={create}
+      onquickcreate={quickCreate}
+      onmove={moveTo}
+      onstatus={changeStatus}
+      onhelp={showHelp}
+    />
+  {:else}
+    <Board
+      bind:this={board}
+      {data}
+      {visible}
+      {grouped}
+      {query}
+      {readonly}
+      {dirty}
+      {mobile}
+      {coarse}
+      bind:selectedId
+      bind:activeColumn
+      bind:quick
+      {creating}
+      {announcement}
+      onopen={openItem}
+      oncreate={create}
+      onquickcreate={quickCreate}
+      onmove={moveTo}
+      onstatus={changeStatus}
+      {guardDraft}
+      onhelp={showHelp}
+    />
+  {/if}
   {#if ticket.id}
     <div class="detail-shell" transition:panel>
       {#if ticket.item}
@@ -801,6 +864,6 @@
     onclose={closeDialog}
   />
 {:else if modal === 'shortcuts'}
-  <ShortcutsDialog onclose={closeDialog} />
+  <ShortcutsDialog view={layout} onclose={closeDialog} />
 {/if}
 {#if palette}<CommandMenu actions={menuActions} title={menuTitle} onclose={closePalette} />{/if}

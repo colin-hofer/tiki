@@ -614,6 +614,7 @@
                 aria-current={openId === item.id ? 'true' : undefined}
               >
                 <span class="card-title">{item.title}</span>
+                {#if item.preview}<span class="card-preview">{item.preview}</span>{/if}
                 <div class="card-meta">
                   <span class={`item-type ${item.type}`} title={label(item.type)}
                     ><Icon name={item.type} size={12} /></span
