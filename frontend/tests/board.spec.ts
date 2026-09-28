@@ -297,7 +297,7 @@ test('refreshes reuse unchanged tickets and order detection follows the current 
   await mock(context, [makeItem(1, 'todo'), makeItem(2, 'todo')]);
   await page.goto('/');
   const result = await page.evaluate(async () => {
-    const { BoardState } = await import('../src/board.svelte.ts');
+    const { BoardState } = await import('../src/board-state.svelte.ts');
     const data = new BoardState('1', () => {});
     data.start();
     try {

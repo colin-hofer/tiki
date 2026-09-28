@@ -4,7 +4,7 @@
   import { APIError, message, statuses, label } from './api';
   import type { Item, ItemPatch, ItemType, User, Status } from './api';
   import type { EditorField } from './item-edit';
-  import { BoardState } from './board.svelte';
+  import { BoardState } from './board-state.svelte';
   import { groupItems } from './items';
   import Board from './Board.svelte';
   import Toolbar from './Toolbar.svelte';
