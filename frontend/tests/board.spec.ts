@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import type { Item, Status, Updates } from '../src/api';
 import { itemFields, itemPatch, rebaseFields } from '../src/item-edit';
+import { applyItemChanges, reconcileItems } from '../src/items';
 
 const user = { id: '1', name: 'Alex Morgan', role: 'member' };
 const statuses: Status[] = [
@@ -301,7 +302,7 @@ test('refreshes reuse unchanged tickets and order detection follows the current 
     const data = new BoardState('1', () => {});
     data.start();
     try {
-      await data.refresh({ order: true });
+      await data.refresh();
       const original = data.items;
       await data.refresh();
       const sameRows = data.items === original;
@@ -331,6 +332,154 @@ test('refreshes reuse unchanged tickets and order detection follows the current 
     remaining: ['2'],
     orderedAfterDelete: true,
   });
+});
+
+test('reconciliation preserves versions and positions while paged moves identify only affected columns', () => {
+  const filters = { status: '' as const, tag: '', assignee: '' };
+  const first = makeItem(1, 'todo');
+  const second = makeItem(2, 'todo');
+  const current = [first, second];
+  expect(reconcileItems(current, [{ ...first }], filters)).toBe(current);
+  const changed = { ...second, priority: 0, version: 2 };
+  const live = applyItemChanges(current, [changed], {}, filters);
+  expect(live.items.map((item) => item.id)).toEqual(['1', '2']);
+  expect(live.items[0]).toBe(first);
+  expect(live.columns.size).toBe(0);
+  expect(reconcileItems(live.items, [second], filters)).toBe(live.items);
+  expect(reconcileItems(live.items, [], filters, [], true).map((item) => item.id)).toEqual([
+    '2',
+    '1',
+  ]);
+  const moved = { ...first, status: 'complete' as const, version: 2 };
+  const page = applyItemChanges(current, [moved], { todo: 'cursor' }, filters);
+  expect([...page.columns]).toEqual(['todo']);
+  expect(page.items.find((item) => item.id === '1')?.status).toBe('complete');
+  expect(
+    reconcileItems(current, [first], { ...filters, status: 'todo', tag: 'api' }, ['todo']),
+  ).toEqual([first]);
+});
+
+test('changing filters cancels a slow snapshot without replacing the newer view', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await signIn(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let requested!: () => void;
+  const started = new Promise<void>((resolve) => (requested = resolve));
+  await page.route('**/api/v1/board?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('status') === 'todo') {
+      requested();
+      await held;
+    }
+    await route.fallback();
+  });
+  const filter = page.getByRole('combobox', { name: 'Filter status', exact: true });
+  await filter.click();
+  await page.getByRole('option', { name: 'Todo', exact: true }).click();
+  await started;
+  await filter.click();
+  await page.getByRole('option', { name: 'In progress', exact: true }).click();
+  await expect(page.locator('#ticket-3')).toBeVisible();
+  release();
+  await expect(page.locator('.kanban-column')).toHaveCount(1);
+  await expect(page.locator('[data-column="in_progress"] .card')).toHaveCount(2);
+  await expect(page.locator('#ticket-2')).toHaveCount(0);
+});
+
+test('expired pagination resets the loaded pages and retries through the sync queue', async ({
+  page,
+  context,
+}) => {
+  await mock(
+    context,
+    Array.from({ length: 130 }, (_, i) => makeItem(i + 1, 'backlog')),
+  );
+  await signIn(page);
+  await page.route('**/api/v1/items?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'cursor_expired', message: 'Cursor expired' } }),
+      });
+    } else await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Load more', exact: true }).click();
+  await expect(page.getByText('Order changed; loaded pages reset.', { exact: true })).toBeVisible();
+  await expect(page.locator('.connection')).toHaveText('Live');
+  await expect(page.locator('[data-column="backlog"] .card')).toHaveCount(20);
+  await expect(page.getByRole('button', { name: 'Load more', exact: true })).toBeEnabled();
+});
+
+test('switching tickets cancels the previous detail request', async ({ page, context }) => {
+  await mock(context);
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { TicketState } = await import('../src/ticket.svelte.ts');
+    const ticket = new TicketState();
+    const first = ticket.open('1');
+    const second = ticket.open('2');
+    await Promise.all([first, second]);
+    const loaded = {
+      id: ticket.id,
+      item: ticket.item?.id,
+      loading: ticket.loading,
+      error: ticket.error,
+    };
+    const pending = ticket.open('3');
+    ticket.stop();
+    await pending;
+    return { loaded, cancelled: ticket.item === null && !ticket.loading && !ticket.error };
+  });
+  expect(result).toEqual({
+    loaded: { id: '2', item: '2', loading: false, error: '' },
+    cancelled: true,
+  });
+});
+
+test('restarting the stream during a write resumes pending synchronization after its acknowledgement', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await page.goto('/');
+  const title = await page.evaluate(async () => {
+    const { BoardState } = await import('../src/board.svelte.ts');
+    let refreshed!: () => void;
+    const restarted = new Promise<void>((resolve) => (refreshed = resolve));
+    let firstLoad = true;
+    const data = new BoardState('1', () => {
+      if (!firstLoad) refreshed();
+    });
+    data.start();
+    await data.refresh();
+    const fetch = window.fetch;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    window.fetch = async (input, init) => {
+      if (init?.method === 'PATCH') await held;
+      return fetch(input, init);
+    };
+    try {
+      const saving = data.update('2', 1, { title: 'Saved across a reconnect' });
+      data.start();
+      firstLoad = false;
+      // Let the ready-event debounce run while the old write is still pending.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      await saving;
+      await restarted;
+      return data.itemsById.get('2')?.title;
+    } finally {
+      release();
+      window.fetch = fetch;
+      data.stop();
+    }
+  });
+  expect(title).toBe('Saved across a reconnect');
 });
 
 test('unsaved editor state immediately protects unload and disables board dragging', async ({

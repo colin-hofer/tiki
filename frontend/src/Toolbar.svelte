@@ -153,9 +153,8 @@
       >{/if}
   </div>
   <span class="toolbar-spacer"></span>
-  {#if data.orderChanged}<button
-      class="text-button order-notice"
-      onclick={() => data.refresh({ order: true })}>Apply order</button
+  {#if data.orderChanged}<button class="text-button order-notice" onclick={() => data.applyOrder()}
+      >Apply order</button
     >{/if}
   <span
     class={`connection ${data.connection}`}
@@ -186,7 +185,7 @@
     aria-label="Refresh board"
     title="Refresh (R)"
     disabled={data.busy}
-    onclick={() => data.refresh({ order: true })}><Icon name="refresh" size={15} /></button
+    onclick={() => data.refresh()}><Icon name="refresh" size={15} /></button
   >
   {#if user.role === 'admin'}<button
       class="icon-button"

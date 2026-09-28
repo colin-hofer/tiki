@@ -37,13 +37,14 @@
     untrack(() => user.id),
     (current) => onuser(current),
   );
+  const ticket = data.ticket;
   data.filters = {
     status: statuses.find((status) => status === initialURL.searchParams.get('status')) || '',
     tag: initialURL.searchParams.get('tag') || '',
     assignee: initialURL.searchParams.get('assignee') || '',
   };
-  data.openId = initialURL.searchParams.get('item') || '';
-  let selectedId = $state(data.openId);
+  ticket.id = initialURL.searchParams.get('item') || '';
+  let selectedId = $state(ticket.id);
   let activeColumn = $state<Status>('todo');
   let query = $state(initialURL.searchParams.get('q') || '');
   let quick = $state<{ status: Status | null; title: string }>({ status: null, title: '' });
@@ -65,7 +66,7 @@
   let board: Board;
   let toolbar: Toolbar;
   let editor = $state<ItemEditor>();
-  const dirty = $derived(Boolean(data.openId && editor?.hasUnsavedChanges()));
+  const dirty = $derived(Boolean(ticket.id && editor?.hasUnsavedChanges()));
   const readonly = $derived(user.role === 'viewer');
   const moving = $derived(Boolean(data.writing));
   const columns = $derived(data.columns);
@@ -80,7 +81,7 @@
   const selected = $derived(visible.find((item) => item.id === selectedId));
   const grouped = $derived(groupItems(visible));
   const boardItems = $derived(columns.flatMap((status) => grouped[status]));
-  const openedIndex = $derived(boardItems.findIndex((item) => item.id === data.openId));
+  const openedIndex = $derived(boardItems.findIndex((item) => item.id === ticket.id));
 
   $effect(() => {
     if (expired) {
@@ -108,7 +109,7 @@
       id: 'refresh',
       label: 'Refresh tickets and apply current order',
       hint: 'R',
-      run: () => void data.refresh({ order: true }),
+      run: () => void data.refresh(),
     },
     ...(selected
       ? [
@@ -120,14 +121,13 @@
           },
         ]
       : []),
-    ...(!readonly && (selected || (data.detail && !data.detailDeleted))
+    ...(!readonly && (selected || (ticket.item && !ticket.deleted))
       ? [
           {
             id: 'delete',
-            label: `Delete TK-${data.openId && !data.detailDeleted ? data.openId : selectedId}…`,
+            label: `Delete TK-${ticket.id && !ticket.deleted ? ticket.id : selectedId}…`,
             hint: 'Delete',
-            run: () =>
-              void requestDelete(data.openId && !data.detailDeleted ? data.detail : selected),
+            run: () => void requestDelete(ticket.id && !ticket.deleted ? ticket.item : selected),
           },
         ]
       : []),
@@ -247,19 +247,17 @@
     ];
   });
   async function editSelected(field: EditorField = 'title') {
-    const id = document.activeElement?.closest('.detail')
-      ? data.openId
-      : selected?.id || data.openId;
+    const id = document.activeElement?.closest('.detail') ? ticket.id : selected?.id || ticket.id;
     if (!id) return;
-    if (data.openId !== id) await openItem(id, false);
-    if (data.openId !== id) return;
+    if (ticket.id !== id) await openItem(id, false);
+    if (ticket.id !== id) return;
     await tick();
     editor?.focus(field);
   }
 
   async function propertyMenu(mode: Exclude<Menu, 'commands'>) {
     if (readonly) return;
-    if (data.openId && (document.activeElement?.closest('.detail') || selectedId === data.openId)) {
+    if (ticket.id && (document.activeElement?.closest('.detail') || selectedId === ticket.id)) {
       void editSelected(mode);
       return;
     }
@@ -270,7 +268,7 @@
 
   function assignMe() {
     if (!user || readonly) return;
-    if (data.openId && (document.activeElement?.closest('.detail') || selectedId === data.openId)) {
+    if (ticket.id && (document.activeElement?.closest('.detail') || selectedId === ticket.id)) {
       editor?.assignSelf();
       return;
     }
@@ -300,7 +298,7 @@
       status: data.filters.status,
       tag: data.filters.tag,
       assignee: data.filters.assignee,
-      item: data.openId,
+      item: ticket.id,
     })) {
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
@@ -363,22 +361,22 @@
   }
 
   async function openItem(id: string, focus = true) {
-    if (data.openId !== id) {
+    if (ticket.id !== id) {
       if (!(await guardDraft())) return;
       quick.status = null;
       selectedId = id;
-      const loading = data.open(id);
+      const loading = ticket.open(id);
       updateURL(true);
       await loading;
     }
-    if (focus && data.openId === id) {
+    if (focus && ticket.id === id) {
       await tick();
       editor?.focus(readonly || coarse ? undefined : 'title');
     }
   }
   async function closeDetails() {
     if (!(await guardDraft())) return;
-    data.open('');
+    ticket.open('');
     updateURL(true);
     await tick();
     board.focusBoard();
@@ -386,7 +384,7 @@
   async function create(status: Status = activeColumn) {
     if (!(await guardDraft()) || readonly) return;
     if (!columns.includes(status)) status = columns[0] || 'todo';
-    data.open('');
+    ticket.open('');
     updateURL(true);
     quick.status = status;
     quick.title = '';
@@ -468,16 +466,16 @@
     }
   }
   async function requestDelete(item: Item | null | undefined) {
-    if (!item || readonly || expired || deleteTarget || (moving && item.id !== data.openId)) return;
-    if (item.id !== data.openId && !(await guardDraft())) return;
+    if (!item || readonly || expired || deleteTarget || (moving && item.id !== ticket.id)) return;
+    if (item.id !== ticket.id && !(await guardDraft())) return;
     deleteTarget = item;
     preparingDelete = true;
     showDialog('delete');
     await tick();
-    if (item.id === data.openId) await editor?.settle();
+    if (item.id === ticket.id) await editor?.settle();
     if (modal !== 'delete') return;
     deleteTarget =
-      (data.detail?.id === item.id ? data.detail : data.itemsById.get(item.id)) || item;
+      (ticket.item?.id === item.id ? ticket.item : data.itemsById.get(item.id)) || item;
     preparingDelete = false;
   }
   async function deleted(id: string) {
@@ -509,7 +507,7 @@
     )
       data.filters.status = quick.status;
     updateURL(true);
-    void data.refresh({ order: true, reset: true });
+    void data.reset();
   }
   function keyboard(event: KeyboardEvent) {
     if (!user || expired || event.isComposing || event.defaultPrevented) return;
@@ -530,7 +528,7 @@
       if (target.closest('.detail')) {
         if (matchMedia('(max-width: 800px)').matches) void closeDetails();
         else board.focusBoard();
-      } else if (data.openId) editor?.focus();
+      } else if (ticket.id) editor?.focus();
       else void toolbar.focusSearch();
       return;
     }
@@ -543,7 +541,7 @@
       } else if (editing && target.closest('.detail')) editor?.focus();
       else if (target.matches('.search-field input') || target.closest('.toolbar'))
         board.focusBoard();
-      else if (data.openId) void closeDetails();
+      else if (ticket.id) void closeDetails();
       else board.focusBoard();
       return;
     }
@@ -562,7 +560,7 @@
       (target.closest('.detail, .board') || target === document.body)
     ) {
       event.preventDefault();
-      void requestDelete(target.closest('.detail') ? data.detail : selected);
+      void requestDelete(target.closest('.detail') ? ticket.item : selected);
       return;
     }
     if (!event.altKey && ['/', 'c', '?', 'r'].includes(key)) {
@@ -570,7 +568,7 @@
       if (key === '/') void toolbar.focusSearch(true);
       if (key === 'c' && !event.repeat) void create();
       if (key === '?') void showHelp();
-      if (key === 'r') void data.refresh({ order: true });
+      if (key === 'r') void data.refresh();
       return;
     }
     if (
@@ -637,11 +635,11 @@
     };
     const id = url.searchParams.get('item') || '';
     quick.status = null;
-    if (id !== data.openId) {
+    if (id !== ticket.id) {
       selectedId = id;
-      void data.open(id);
+      void ticket.open(id);
     }
-    void data.refresh({ order: true, reset: true });
+    void data.reset();
   }
 </script>
 
@@ -678,9 +676,8 @@
   />
   {#if data.error}
     <div class="board-alert error-banner" role="alert">
-      <span>{data.error}</span><button
-        class="text-button"
-        onclick={() => data.refresh({ order: true })}>Retry</button
+      <span>{data.error}</span><button class="text-button" onclick={() => data.refresh()}
+        >Retry</button
       >
     </div>
   {/if}
@@ -716,48 +713,48 @@
     {guardDraft}
     onhelp={showHelp}
   />
-  {#if data.openId}
+  {#if ticket.id}
     <div class="detail-shell" transition:panel>
-      {#if data.detail}
-        {#key data.openId}
+      {#if ticket.item}
+        {#key ticket.id}
           <ItemEditor
             bind:this={editor}
             currentUserId={user.id}
-            item={data.detail}
+            item={ticket.item}
             users={data.users}
             tags={data.tags}
             readonly={readonly || expired}
-            deleted={data.detailDeleted}
+            deleted={ticket.deleted}
             suspended={modal === 'delete'}
-            onmissing={() => (data.detailDeleted = true)}
-            ondelete={() => requestDelete(data.detail)}
+            onmissing={() => (ticket.deleted = true)}
+            ondelete={() => requestDelete(ticket.item)}
             canPrevious={openedIndex > 0}
             canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1}
             onnavigate={adjacentItem}
             onclose={closeDetails}
             onpersist={(id, version, patch) => data.update(id, version, patch)}
-            onreload={() => data.loadDetail()}
+            onreload={() => ticket.reload()}
           />
         {/key}
       {:else}
-        <aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${data.openId}`}>
+        <aside class="detail detail-loading" tabindex="-1" aria-label={`Item ${ticket.id}`}>
           <div class="detail-top">
-            <span>#{data.openId}</span><button
+            <span>#{ticket.id}</span><button
               class="icon-button detail-close"
               aria-label="Close item"
               onclick={closeDetails}><Icon name="close" size={16} /></button
             >
           </div>
           <p>
-            {data.detailLoading
+            {ticket.loading
               ? 'Loading…'
-              : data.detailDeleted
+              : ticket.deleted
                 ? 'This ticket was deleted or is no longer available.'
-                : 'Could not load item.'}
+                : ticket.error || 'Could not load item.'}
           </p>
-          {#if !data.detailLoading && !data.detailDeleted}<button
+          {#if !ticket.loading && !ticket.deleted}<button
               class="small-button"
-              onclick={() => data.loadDetail()}>Retry</button
+              onclick={() => ticket.reload()}>Retry</button
             >{/if}
         </aside>
       {/if}

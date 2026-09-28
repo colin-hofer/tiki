@@ -52,7 +52,7 @@
   } = $props();
   const columns = $derived(data.columns);
   const selected = $derived(visible.find((item) => item.id === selectedId));
-  const openId = $derived(data.openId);
+  const openId = $derived(data.ticket.id);
   const cursors = $derived(data.cursors);
   const busy = $derived(data.busy || Boolean(data.writing));
   const hasLoaded = $derived(data.hasLoaded);
