@@ -1467,6 +1467,33 @@ test.describe('phone layout', () => {
       .toBe('blocked');
   });
 
+  test('every text field is at least 16px so iOS Safari does not zoom on focus', async ({
+    page,
+    context,
+  }) => {
+    await mock(context);
+    await signIn(page);
+    const small = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLInputElement>('input, textarea, select')]
+          .filter((field) => field.checkVisibility() && !['checkbox', 'radio'].includes(field.type))
+          .map((field) => [
+            field.getAttribute('aria-label') || field.id,
+            getComputedStyle(field).fontSize,
+          ])
+          .filter(([, size]) => parseFloat(size) < 16),
+      );
+    expect(await small()).toEqual([]);
+    await page
+      .getByRole('group', { name: 'Statuses' })
+      .getByRole('button', { name: /^In progress/ })
+      .click();
+    await page.locator('#ticket-3').click();
+    await expect(page.getByRole('complementary', { name: 'Item 3', exact: true })).toBeVisible();
+    await expect(page.locator('.comment-input textarea')).toBeVisible();
+    expect(await small()).toEqual([]);
+  });
+
   test('press and hold lifts a card; drag vertically to reorder and to an edge to change status', async ({
     page,
     context,

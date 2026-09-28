@@ -1842,14 +1842,18 @@ dialog[open]::backdrop {
   display: inline-flex;
 }
 
+/* iOS Safari zooms the page into any focused field set below 16px. On phones, portrait or landscape,
+   this outranks the compact component sizes so no field ever triggers it. */
+@media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+  :is(input:not([type='checkbox'], [type='radio'], [type='hidden']), textarea, select) {
+    font-size: 16px !important;
+  }
+}
+
 /* Phones: a single-status feed with tabs, a compact toolbar and full-page tickets */
 @media (max-width: 700px) {
   .desktop-only {
     display: none !important;
-  }
-  input,
-  textarea {
-    font-size: 16px;
   }
 
   .toolbar {
@@ -2289,14 +2293,12 @@ dialog[open]::backdrop {
     width: 24px;
     height: 24px;
   }
-  /* 16px keeps iOS from zooming when the field takes focus. */
   .tag-entry {
     height: 30px;
   }
   .tag-entry input,
   .tag-entry input:focus {
     width: 120px;
-    font-size: 16px;
   }
   .property-text {
     font-size: 14px;
