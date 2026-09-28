@@ -6,25 +6,21 @@
   import { duration } from './motion';
   import Icon from './Icon.svelte';
 
-  let { item, users, deleted }: { item: Item; users: User[]; deleted: boolean } = $props();
+  let { item, usersById, deleted }: { item: Item; usersById: Map<string, User>; deleted: boolean } =
+    $props();
   let open = $state(false);
   let activity = $state<Activity[]>([]);
   let cursor = $state('');
   let busy = $state(false);
   let error = $state('');
   let controller: AbortController | undefined;
-  let generation = 0;
   $effect(() => {
     void item.version;
     if (open && !deleted) untrack(() => void load());
-    return () => {
-      controller?.abort();
-      generation++;
-    };
+    return () => controller?.abort();
   });
   async function load(more = false) {
     controller?.abort();
-    const own = ++generation;
     const signal = (controller = new AbortController()).signal;
     busy = true;
     error = '';
@@ -35,13 +31,13 @@
         undefined,
         signal,
       );
-      if (own !== generation) return;
+      if (signal.aborted) return;
       activity = more ? [...activity, ...page.activity] : page.activity;
       cursor = page.next_after || '';
     } catch (cause) {
       if (!signal.aborted) error = message(cause);
     } finally {
-      if (own === generation) busy = false;
+      if (!signal.aborted) busy = false;
     }
   }
 </script>
@@ -57,10 +53,7 @@
           <li>
             <span class="activity-node" aria-hidden="true"></span>
             <div>
-              <strong
-                >{users.find((user) => user.id === event.actor_id)?.name ||
-                  `User ${event.actor_id}`}</strong
-              >
+              <strong>{usersById.get(event.actor_id)?.name || `User ${event.actor_id}`}</strong>
               <span class="muted">{event.kind.replaceAll('_', ' ').replaceAll('.', ' ')}</span>
               <time datetime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
             </div>

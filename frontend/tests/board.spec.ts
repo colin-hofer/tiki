@@ -290,6 +290,102 @@ async function signIn(page: Page) {
   await expect(page.locator('.connection')).toHaveAttribute('title', /Last sync/);
 }
 
+test('refreshes reuse unchanged tickets and order detection follows the current rows', async ({
+  page,
+  context,
+}) => {
+  await mock(context, [makeItem(1, 'todo'), makeItem(2, 'todo')]);
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const { BoardState } = await import('../src/board.svelte.ts');
+    const data = new BoardState('1', () => {});
+    data.start();
+    try {
+      await data.refresh({ order: true });
+      const original = data.items;
+      await data.refresh();
+      const sameRows = data.items === original;
+      await data.update('1', 1, { title: 'A new revision' });
+      const reusedSibling = data.itemsById.get('2') === original[1];
+      const changedTicket = data.itemsById.get('1') !== original[0];
+      data.items = [data.items[1], data.items[0]];
+      const changedOrder = data.orderChanged;
+      await data.remove(data.itemsById.get('1')!);
+      return {
+        sameRows,
+        reusedSibling,
+        changedTicket,
+        changedOrder,
+        remaining: data.items.map((item) => item.id),
+        orderedAfterDelete: !data.orderChanged,
+      };
+    } finally {
+      data.stop();
+    }
+  });
+  expect(result).toEqual({
+    sameRows: true,
+    reusedSibling: true,
+    changedTicket: true,
+    changedOrder: true,
+    remaining: ['2'],
+    orderedAfterDelete: true,
+  });
+});
+
+test('unsaved editor state immediately protects unload and disables board dragging', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await signIn(page);
+  await page.locator('#ticket-2').click();
+  await page.getByLabel('Ticket title').fill('');
+  await expect(page.locator('#ticket-9')).toHaveAttribute('draggable', 'false');
+  expect(
+    await page.evaluate(() => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(true);
+  await page.getByLabel('Ticket title').fill('Saved title');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  await expect(page.locator('#ticket-9')).toHaveAttribute('draggable', 'true');
+  expect(
+    await page.evaluate(() => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(false);
+});
+
+test('select popovers toggle, dismiss outside, and hand off to another select', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await signIn(page);
+  const status = page.getByRole('combobox', { name: 'Filter status', exact: true });
+  const tag = page.getByRole('combobox', { name: 'Filter tag', exact: true });
+  await status.click();
+  await expect(status).toHaveAttribute('aria-expanded', 'true');
+  await status.click();
+  await expect(status).toHaveAttribute('aria-expanded', 'false');
+  await status.click();
+  await tag.click();
+  await expect(status).toHaveAttribute('aria-expanded', 'false');
+  await expect(tag).toHaveAttribute('aria-expanded', 'true');
+  await page.locator('.wordmark').click();
+  await expect(tag).toHaveAttribute('aria-expanded', 'false');
+  await status.focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  await expect(status).toBeFocused();
+  await expect(status).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('live role changes update permissions without losing an open draft', async ({
   page,
   context,
@@ -634,7 +730,7 @@ test('keyboard and drag reordering work within and across columns, including fil
   await expect(
     page.getByRole('region', { name: 'Todo column', exact: true }).locator('.card').nth(1),
   ).toHaveAttribute('id', 'ticket-4');
-  await page.getByLabel('Filter status').click();
+  await page.getByLabel('Filter status', { exact: true }).click();
   await page.getByRole('option', { name: 'Todo', exact: true }).click();
   await expect(page.locator('.kanban-column')).toHaveCount(1);
   await page.locator('#ticket-4').focus();
@@ -886,7 +982,7 @@ test.describe('phone layout', () => {
     );
     await expect(page.locator('#ticket-2')).toBeInViewport();
     await page.getByRole('button', { name: 'Filters', exact: true }).click();
-    await page.getByLabel('Filter status').click();
+    await page.getByLabel('Filter status', { exact: true }).click();
     await page.getByRole('option', { name: 'Complete', exact: true }).click();
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(tabs.getByRole('button')).toHaveCount(1);

@@ -1,26 +1,27 @@
 import { api, APIError, directory, message, statuses, watchChanges } from './api';
 import type { Board, Item, ItemPatch, NewItem, Page, Status, User } from './api';
+import { compareItems } from './items';
 
 export interface Filters {
   status: Status | '';
   tag: string;
   assignee: string;
 }
-const compare = (a: Item, b: Item) =>
-  a.priority - b.priority ||
-  (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0);
 const summary = ({ description, ...item }: Item): Item => item;
 
 // One owner for server state. Components own navigation, focus, and unsaved drafts.
 export class BoardState {
-  items = $state<Item[]>([]);
-  users = $state<User[]>([]);
-  tags = $state<string[]>([]);
+  // Server snapshots are replaced, never edited in place. Drafts live in the editor.
+  items = $state.raw<Item[]>([]);
+  users = $state.raw<User[]>([]);
+  tags = $state.raw<string[]>([]);
+  itemsById = $derived(new Map(this.items.map((item) => [item.id, item])));
+  usersById = $derived(new Map(this.users.map((user) => [user.id, user])));
   filters = $state<Filters>({ status: '', tag: '', assignee: '' });
   columns = $derived(
     statuses.filter((status) => !this.filters.status || status === this.filters.status),
   );
-  cursors = $state<Partial<Record<Status, string>>>({});
+  cursors = $state.raw<Partial<Record<Status, string>>>({});
   busy = $state(false);
   writing = $state(0);
   hasLoaded = $state(false);
@@ -28,14 +29,22 @@ export class BoardState {
   lastSync = $state('');
   error = $state('');
   notice = $state('');
-  orderChanged = $state(false);
+  orderChanged = $derived.by(() => {
+    const last = new Map<Status, Item>();
+    for (const item of this.items) {
+      if (!this.columns.includes(item.status)) continue;
+      const previous = last.get(item.status);
+      if (previous && compareItems(previous, item) > 0) return true;
+      last.set(item.status, item);
+    }
+    return false;
+  });
   openId = $state('');
-  detail = $state<Item | null>(null);
+  detail = $state.raw<Item | null>(null);
   detailLoading = $state(false);
   detailDeleted = $state(false);
 
   private pages: Partial<Record<Status, number>> = {};
-  private generation = 0;
   private detailGeneration = 0;
   private controller?: AbortController;
   private timer?: ReturnType<typeof setTimeout>;
@@ -113,7 +122,6 @@ export class BoardState {
 
   private cancelRead() {
     this.controller?.abort();
-    this.generation++;
     this.syncing = this.busy = false;
   }
 
@@ -180,7 +188,7 @@ export class BoardState {
     this.users = users;
     this.tags = tags;
     const current = users.find((user) => user.id === this.userId);
-    if (current) this.userChanged(current);
+    if (current) this.onuser(current);
   }
 
   userChanged(user: User) {
@@ -213,7 +221,7 @@ export class BoardState {
 
   private merge(incoming: Item[], applyOrder = false): Set<Status> {
     const affected = new Set<Status>();
-    const byId = new Map(this.items.map((item) => [item.id, item]));
+    const byId = new Map(this.itemsById);
     const tags = new Set(this.tags);
     for (const item of incoming) {
       this.acceptDetail(item);
@@ -224,7 +232,7 @@ export class BoardState {
       const inWindow =
         !this.cursors[item.status] ||
         previous?.status === item.status ||
-        this.items.some((card) => card.status === item.status && compare(item, card) <= 0);
+        this.items.some((card) => card.status === item.status && compareItems(item, card) <= 0);
       if (
         !previous ||
         !matches ||
@@ -237,20 +245,17 @@ export class BoardState {
       if (!matches || !inWindow) byId.delete(item.id);
       else if (previous || !this.cursors[item.status]) byId.set(item.id, summary(item));
     }
-    this.items = [...byId.values()];
+    const rows = [...byId.values()];
+    if (applyOrder) rows.sort(compareItems);
+    this.setItems(rows);
     if (tags.size !== this.tags.length) this.tags = [...tags].sort();
-    if (applyOrder) this.items.sort(compare);
-    this.checkOrder();
     this.synced();
     return affected;
   }
 
-  private checkOrder() {
-    this.orderChanged = this.columns.some((status) => {
-      const column = this.items.filter((item) => item.status === status);
-      const sorted = [...column].sort(compare);
-      return column.some((item, index) => item.id !== sorted[index].id);
-    });
+  private setItems(rows: Item[]) {
+    if (rows.length !== this.items.length || rows.some((item, i) => item !== this.items[i]))
+      this.items = rows;
   }
 
   async refresh({
@@ -277,7 +282,6 @@ export class BoardState {
     this.cancelRead();
     const controller = (this.controller = new AbortController());
     const signal = controller.signal;
-    const own = this.generation;
     const filters = { ...this.filters };
     const targetId = this.openId;
     this.syncing = true;
@@ -289,7 +293,7 @@ export class BoardState {
         ? undefined
         : await api<Board>(`/board?${params}`, 'GET', undefined, signal);
       if (board) await this.loadDirectory(board, signal);
-      if (own !== this.generation) return false;
+      if (signal.aborted) return false;
       if (
         board &&
         filters.tag &&
@@ -322,8 +326,8 @@ export class BoardState {
           return { status, rows, cursor };
         }),
       );
-      if (own !== this.generation) return false;
-      const current = new Map(this.items.map((item) => [item.id, item]));
+      if (signal.aborted) return false;
+      const current = this.itemsById;
       const incoming = [
         ...this.items.filter((item) => only && !columns.includes(item.status)),
         ...pages.flatMap((page) => page.rows),
@@ -331,27 +335,26 @@ export class BoardState {
       const unique = new Map<string, Item>();
       for (let item of incoming) {
         const previous = current.get(item.id);
-        if (previous && previous.version > item.version) item = previous;
+        if (previous && previous.version >= item.version) item = previous;
         if (
           (!unique.has(item.id) || item.version > unique.get(item.id)!.version) &&
           this.matches(item)
         )
           unique.set(item.id, item);
       }
-      const rows = [...unique.values()].sort(compare);
-      if (order || !this.hasLoaded) this.items = rows;
+      const rows = [...unique.values()].sort(compareItems);
+      if (order || !this.hasLoaded) this.setItems(rows);
       else {
         const stable = this.items
           .filter((item) => unique.has(item.id))
           .map((item) => unique.get(item.id)!);
         const oldIds = new Set(stable.map((item) => item.id));
-        this.items = [...stable, ...rows.filter((item) => !oldIds.has(item.id))];
+        this.setItems([...stable, ...rows.filter((item) => !oldIds.has(item.id))]);
       }
       this.cursors = {
         ...(only ? this.cursors : {}),
         ...Object.fromEntries(pages.map((page) => [page.status, page.cursor])),
       };
-      this.checkOrder();
       this.hasLoaded = true;
       this.error = '';
       this.connection = this.streamState;
@@ -359,7 +362,7 @@ export class BoardState {
       if (detail && targetId) await this.loadDetail(targetId, signal);
       return true;
     } catch (error) {
-      if (signal.aborted || own !== this.generation) return false;
+      if (signal.aborted) return false;
       if (
         error instanceof APIError &&
         error.code === 'cursor_expired' &&
@@ -372,7 +375,7 @@ export class BoardState {
       this.error = message(error);
       return false;
     } finally {
-      if (own === this.generation) this.syncing = this.busy = false;
+      if (!signal.aborted) this.syncing = this.busy = false;
     }
   }
 
@@ -463,7 +466,7 @@ export class BoardState {
         }
       },
       () => {
-        this.items = this.items.filter((current) => current.id !== item.id);
+        this.setItems(this.items.filter((current) => current.id !== item.id));
         this.pendingItems.delete(item.id);
         if (this.openId === item.id) this.open('');
         return new Set([item.status]);

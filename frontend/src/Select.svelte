@@ -10,7 +10,6 @@
     description?: string;
     action?: () => void;
   }
-  let sequence = 0;
 </script>
 
 <script lang="ts">
@@ -40,7 +39,7 @@
     onchange?: (value: string) => void;
   } = $props();
 
-  const id = `select-${++sequence}`;
+  const id = $props.id();
   let open = $state(false);
   let active = $state(0);
   let trigger: HTMLButtonElement;
@@ -53,20 +52,26 @@
 
   async function show() {
     if (disabled || open || !options.length) return;
+    popup.showPopover();
+    await tick();
+  }
+  function beforeToggle(event: ToggleEvent) {
+    open = event.newState === 'open';
+    if (!open) return;
     active = Math.max(
       0,
       options.findIndex((o) => o.value === value),
     );
-    open = true;
-    await tick();
-    popup.showPopover?.();
+  }
+  function toggled() {
+    // Native visibility changes after beforetoggle; measure only once the popup is visible.
+    if (!open) return;
     place();
     popup.querySelector(`#${id}-${active}`)?.scrollIntoView({ block: 'nearest' });
   }
   function hide(focus = true) {
     if (!open) return;
-    open = false;
-    if (popup?.matches(':popover-open')) popup.hidePopover();
+    popup.hidePopover();
     if (focus) trigger.focus();
   }
   function choose(index: number) {
@@ -147,18 +152,12 @@
 
   $effect(() => {
     if (!open) return;
-    const outside = (event: PointerEvent) => {
-      if (!popup.contains(event.target as Node) && !trigger.contains(event.target as Node))
-        hide(false);
-    };
     const scroll = (event: Event) => {
       if (!popup.contains(event.target as Node)) hide(false);
     };
-    document.addEventListener('pointerdown', outside, true);
     window.addEventListener('scroll', scroll, true);
     window.addEventListener('resize', place);
     return () => {
-      document.removeEventListener('pointerdown', outside, true);
       window.removeEventListener('scroll', scroll, true);
       window.removeEventListener('resize', place);
     };
@@ -182,7 +181,7 @@
   aria-activedescendant={open ? `${id}-${active}` : undefined}
   title={title || undefined}
   {disabled}
-  onclick={() => (open ? hide() : void show())}
+  popovertarget={`${id}-list`}
   onkeydown={keydown}
 >
   {#if showPlaceholder}
@@ -198,19 +197,20 @@
   {/if}
   {#if variant !== 'add'}<span class="select-chevron"><Icon name="down" size={13} /></span>{/if}
 </button>
-{#if open}
-  <!-- Pointer-only interactions: keyboard control lives on the combobox trigger. -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    bind:this={popup}
-    id={`${id}-list`}
-    class="select-popup"
-    popover="manual"
-    role="listbox"
-    aria-label={`${label} options`}
-    tabindex="-1"
-  >
-    {#each options as option, i (option.value)}
+<!-- Pointer-only interactions: keyboard control lives on the combobox trigger. -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div
+  bind:this={popup}
+  id={`${id}-list`}
+  class="select-popup"
+  popover="auto"
+  onbeforetoggle={beforeToggle}
+  ontoggle={toggled}
+  role="listbox"
+  aria-label={`${label} options`}
+  tabindex="-1"
+>
+  {#if open}{#each options as option, i (option.value)}
       <div
         id={`${id}-${i}`}
         class="select-option"
@@ -239,9 +239,8 @@
             />{/if}</span
         >
       </div>
-    {/each}
-  </div>
-{/if}
+    {/each}{/if}
+</div>
 
 <style>
   .select-action {

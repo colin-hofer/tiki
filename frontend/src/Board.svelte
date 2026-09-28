@@ -10,6 +10,7 @@
   let {
     data,
     visible,
+    grouped,
     query,
     readonly,
     dirty,
@@ -30,6 +31,7 @@
   }: {
     data: BoardState;
     visible: Item[];
+    grouped: Record<Status, Item[]>;
     query: string;
     readonly: boolean;
     dirty: boolean;
@@ -49,8 +51,6 @@
     onhelp: () => void;
   } = $props();
   const columns = $derived(data.columns);
-  const items = $derived(data.items);
-  const users = $derived(data.users);
   const selected = $derived(visible.find((item) => item.id === selectedId));
   const openId = $derived(data.openId);
   const cursors = $derived(data.cursors);
@@ -83,7 +83,7 @@
       if (focusedItem) activeColumn = focusedItem.status;
       else {
         if (!availableColumns.includes(activeColumn)) activeColumn = availableColumns[0];
-        const column = rows.filter((item) => item.status === activeColumn);
+        const column = grouped[activeColumn];
         selectedId = column[Math.min(preferredRow, column.length - 1)]?.id || '';
       }
       if (board) capture(board);
@@ -329,14 +329,11 @@
       settle(ghost);
       return;
     }
-    const anchor = items.find((i) => i.id === target);
+    const anchor = data.itemsById.get(target);
     // Same column and same slot: nothing to save.
-    const others = visible.filter((i) => i.status === status && i.id !== item.id);
+    const others = grouped[status].filter((i) => i.id !== item.id);
     const slot = anchor ? others.indexOf(anchor) + (before ? 0 : 1) : others.length;
-    if (
-      status === item.status &&
-      slot === visible.filter((i) => i.status === status).findIndex((i) => i.id === item.id)
-    ) {
+    if (status === item.status && slot === grouped[status].findIndex((i) => i.id === item.id)) {
       settle(ghost);
       return;
     }
@@ -356,7 +353,7 @@
   }
   export function focusColumn(status = activeColumn, row = preferredRow) {
     activeColumn = columns.includes(status) ? status : columns[0];
-    const column = visible.filter((i) => i.status === activeColumn);
+    const column = grouped[activeColumn];
     const next = column[Math.min(Math.max(row, 0), column.length - 1)];
     selectedId = next?.id || '';
     const element = board.querySelector<HTMLElement>(
@@ -375,11 +372,11 @@
     const item = visible.find((i) => i.id === selectedId);
     focusColumn(
       item?.status || activeColumn,
-      item ? visible.filter((i) => i.status === item.status).indexOf(item) : preferredRow,
+      item ? grouped[item.status].indexOf(item) : preferredRow,
     );
   }
   export async function move(direction: number) {
-    const column = visible.filter((i) => i.status === activeColumn);
+    const column = grouped[activeColumn];
     const index = column.findIndex((i) => i.id === selectedId);
     const anchor = column[index + direction];
     if (selected && anchor) await onmove(selected, anchor, direction < 0);
@@ -412,10 +409,7 @@
         }
         lastG = 0;
       }
-      const row =
-        key === 'G' || key === 'End'
-          ? Math.max(0, visible.filter((i) => i.status === activeColumn).length - 1)
-          : 0;
+      const row = key === 'G' || key === 'End' ? Math.max(0, grouped[activeColumn].length - 1) : 0;
       focusColumn(activeColumn, row);
       return;
     }
@@ -427,7 +421,7 @@
         void move(direction);
         return;
       }
-      const column = visible.filter((i) => i.status === activeColumn);
+      const column = grouped[activeColumn];
       const index = column.findIndex((i) => i.id === selectedId);
       focusColumn(
         activeColumn,
@@ -458,8 +452,7 @@
         onclick={() => showStatus(status)}
         ><span class={`status-icon ${status}`}><Icon name={status} size={14} /></span>{label(
           status,
-        )}<span class="tab-count"
-          >{visible.filter((i) => i.status === status).length}{cursors[status] ? '+' : ''}</span
+        )}<span class="tab-count">{grouped[status].length}{cursors[status] ? '+' : ''}</span
         ></button
       >{/each}
   </div>{/if}
@@ -471,13 +464,13 @@
   aria-describedby="board-keyboard-hint"
 >
   {#each columns as status}
-    {@const columnItems = visible.filter((i) => i.status === status)}
+    {@const columnItems = grouped[status]}
     <!-- Native drag/drop is an additional input; the same action is available through Alt+arrows and the editor. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <section
       data-column={status}
       class="kanban-column"
-      class:drop-target={dragging && items.find((i) => i.id === dragging)?.status !== status}
+      class:drop-target={dragging && data.itemsById.get(dragging)?.status !== status}
       aria-label={`${label(status)} column`}
       ondragover={(event) => {
         if (dragging && !readonly) event.preventDefault();
@@ -595,7 +588,7 @@
                 ondrop={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  const current = items.find((i) => i.id === dragging);
+                  const current = data.itemsById.get(dragging);
                   if (current) void onmove(current, item, dropBefore);
                 }}
                 onfocus={() => {
@@ -632,8 +625,8 @@
                     >{#each item.assignees.slice(0, 2) as id}<span
                         class="mini-avatar"
                         style:--hue={avatarHue(id)}
-                        title={users.find((u) => u.id === id)?.name || id}
-                        >{initials(users.find((u) => u.id === id)?.name || id)}</span
+                        title={data.usersById.get(id)?.name || id}
+                        >{initials(data.usersById.get(id)?.name || id)}</span
                       >{/each}{#if item.assignees.length > 2}<span class="muted"
                         >+{item.assignees.length - 2}</span
                       >{/if}</span

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { APIError, message } from './api';
   import type { Item } from './api';
   import type { BoardState } from './board.svelte';
@@ -26,8 +26,7 @@
   const busy = $derived(preparing || deleting);
   onMount(() => dialog.showModal());
   $effect(() => {
-    if (!preparing)
-      void tick().then(() => dialog.querySelector<HTMLButtonElement>('button')?.focus());
+    if (!preparing) dialog.querySelector<HTMLButtonElement>('button')?.focus();
   });
   function close() {
     if (!busy) onclose();

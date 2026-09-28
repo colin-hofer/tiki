@@ -1,9 +1,9 @@
 import { cubicOut } from 'svelte/easing';
 import type { TransitionConfig } from 'svelte/transition';
 
-const reduced = () =>
-  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-export const duration = (ms: number) => (reduced() ? 0 : ms);
+const reduced =
+  typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
+export const duration = (ms: number) => (reduced?.matches ? 0 : ms);
 
 // Card positions from just before a DOM update, so a card re-created in another column can glide from its old slot.
 const rects = new Map<string, DOMRect>();
@@ -17,6 +17,7 @@ export function unpin(id: string) {
 }
 export function capture(root: ParentNode = document) {
   rects.clear();
+  if (reduced?.matches) return;
   for (const node of root.querySelectorAll<HTMLElement>('[data-card]'))
     rects.set(node.dataset.card!, node.getBoundingClientRect());
   for (const [id, { rect }] of pinned) rects.set(id, rect);
@@ -30,6 +31,7 @@ export function arrive(node: HTMLElement): TransitionConfig {
     queueMicrotask(drop.used);
   }
   rects.delete(node.dataset.card || '');
+  if (reduced?.matches) return { duration: 0 };
   if (!from)
     return {
       duration: duration(160),

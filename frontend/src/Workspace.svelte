@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { APIError, message, statuses, label } from './api';
   import type { Item, ItemPatch, ItemType, User, Status } from './api';
   import type { EditorField } from './item-edit';
   import { BoardState } from './board.svelte';
+  import { groupItems } from './items';
   import Board from './Board.svelte';
   import Toolbar from './Toolbar.svelte';
   import Icon from './Icon.svelte';
@@ -46,10 +48,11 @@
   let query = $state(initialURL.searchParams.get('q') || '');
   let quick = $state<{ status: Status | null; title: string }>({ status: null, title: '' });
   let creating = $state(false);
-  let dirty = $state(false);
   let announcement = $state('');
-  let mobile = $state(false);
-  let coarse = $state(false);
+  const narrow = new MediaQuery('(max-width: 700px)');
+  const touch = new MediaQuery('(pointer: coarse)');
+  const mobile = $derived(narrow.current);
+  const coarse = $derived(touch.current);
   let modal = $state<'people' | 'setup' | 'tags' | 'shortcuts' | 'account' | 'delete' | null>(null);
   let accountView = $state<'menu' | 'profile' | 'password'>('menu');
   let dialogReturn: HTMLElement | null = null;
@@ -62,28 +65,31 @@
   let board: Board;
   let toolbar: Toolbar;
   let editor = $state<ItemEditor>();
+  const dirty = $derived(Boolean(data.openId && editor?.hasUnsavedChanges()));
   const readonly = $derived(user.role === 'viewer');
   const moving = $derived(Boolean(data.writing));
   const columns = $derived(data.columns);
   const visible = $derived.by(() => {
     const text = query.toLowerCase().trim().replace(/^#/, '').replace(/^tk-/, '');
-    return data.items.filter(
-      (item) =>
-        !text || `${item.id} ${item.title} ${item.tags.join(' ')}`.toLowerCase().includes(text),
-    );
+    return text
+      ? data.items.filter((item) =>
+          `${item.id} ${item.title} ${item.tags.join(' ')}`.toLowerCase().includes(text),
+        )
+      : data.items;
   });
   const selected = $derived(visible.find((item) => item.id === selectedId));
-  const boardItems = $derived(
-    columns.flatMap((status) => visible.filter((item) => item.status === status)),
-  );
+  const grouped = $derived(groupItems(visible));
+  const boardItems = $derived(columns.flatMap((status) => grouped[status]));
   const openedIndex = $derived(boardItems.findIndex((item) => item.id === data.openId));
 
   $effect(() => {
     if (expired) {
-      data.stop();
       modal = null;
       palette = null;
-    } else untrack(() => data.start());
+      return;
+    }
+    untrack(() => data.start());
+    return () => data.stop();
   });
   $effect(() => {
     if (user.role !== 'admin' && modal === 'people') modal = null;
@@ -428,7 +434,7 @@
 
   async function updateItem(item: Item, patch: ItemPatch, feedback: string) {
     if (!(await guardDraft()) || readonly || moving) return;
-    item = data.items.find((current) => current.id === item.id) || item;
+    item = data.itemsById.get(item.id) || item;
     data.error = '';
     try {
       const updated = await data.update(item.id, item.version, patch);
@@ -442,13 +448,13 @@
     }
   }
   async function changeStatus(id: string, status: Status) {
-    const item = data.items.find((item) => item.id === id);
+    const item = data.itemsById.get(id);
     if (item && item.status !== status)
       await updateItem(item, { status }, `Moved to ${label(status)}`);
   }
   async function moveTo(item: Item, anchor: Item, before: boolean) {
     if (item.id === anchor.id || !(await guardDraft()) || readonly || moving) return;
-    item = data.items.find((current) => current.id === item.id) || item;
+    item = data.itemsById.get(item.id) || item;
     data.error = '';
     try {
       const updated = await data.move(item, anchor, before);
@@ -471,13 +477,10 @@
     if (item.id === data.openId) await editor?.settle();
     if (modal !== 'delete') return;
     deleteTarget =
-      (data.detail?.id === item.id
-        ? data.detail
-        : data.items.find((current) => current.id === item.id)) || item;
+      (data.detail?.id === item.id ? data.detail : data.itemsById.get(item.id)) || item;
     preparingDelete = false;
   }
   async function deleted(id: string) {
-    dirty = false;
     announcement = `Deleted TK-${id}`;
     updateURL();
     await closeDialog();
@@ -597,12 +600,6 @@
   }
 
   onMount(() => {
-    const narrow = matchMedia('(max-width: 700px)'),
-      touch = matchMedia('(pointer: coarse)');
-    const media = () => {
-      mobile = narrow.matches;
-      coarse = touch.matches;
-    };
     const viewport = window.visualViewport;
     const keyboardInset = () => {
       if (viewport)
@@ -611,64 +608,54 @@
           `${Math.max(0, Math.round(innerHeight - viewport.height - viewport.offsetTop))}px`,
         );
     };
-    media();
     keyboardInset();
-    const visibility = () => {
-      if (!expired) {
-        if (document.hidden) data.pause();
-        else data.start();
-      }
-    };
-    const online = () => {
-      if (!expired) data.start();
-    };
-    const unload = (event: BeforeUnloadEvent) => {
-      if (dirty || quick.title.trim()) event.preventDefault();
-    };
-    const popstate = async () => {
-      if (!(await guardDraft())) {
-        updateURL();
-        return;
-      }
-      const url = new URL(location.href);
-      query = url.searchParams.get('q') || '';
-      data.filters = {
-        status: statuses.find((status) => status === url.searchParams.get('status')) || '',
-        tag: url.searchParams.get('tag') || '',
-        assignee: url.searchParams.get('assignee') || '',
-      };
-      const id = url.searchParams.get('item') || '';
-      quick.status = null;
-      if (id !== data.openId) {
-        selectedId = id;
-        void data.open(id);
-      }
-      void data.refresh({ order: true, reset: true });
-    };
-    narrow.addEventListener('change', media);
-    touch.addEventListener('change', media);
     viewport?.addEventListener('resize', keyboardInset);
     viewport?.addEventListener('scroll', keyboardInset);
-    document.addEventListener('visibilitychange', visibility);
-    window.addEventListener('online', online);
-    window.addEventListener('beforeunload', unload);
-    window.addEventListener('popstate', popstate);
     return () => {
-      data.stop();
-      narrow.removeEventListener('change', media);
-      touch.removeEventListener('change', media);
       viewport?.removeEventListener('resize', keyboardInset);
       viewport?.removeEventListener('scroll', keyboardInset);
       document.documentElement.style.removeProperty('--keyboard');
-      document.removeEventListener('visibilitychange', visibility);
-      window.removeEventListener('online', online);
-      window.removeEventListener('beforeunload', unload);
-      window.removeEventListener('popstate', popstate);
     };
   });
+
+  function visibilityChanged() {
+    if (expired) return;
+    if (document.hidden) data.pause();
+    else data.start();
+  }
+  async function restoreURL() {
+    if (!(await guardDraft())) {
+      updateURL();
+      return;
+    }
+    const url = new URL(location.href);
+    query = url.searchParams.get('q') || '';
+    data.filters = {
+      status: statuses.find((status) => status === url.searchParams.get('status')) || '',
+      tag: url.searchParams.get('tag') || '',
+      assignee: url.searchParams.get('assignee') || '',
+    };
+    const id = url.searchParams.get('item') || '';
+    quick.status = null;
+    if (id !== data.openId) {
+      selectedId = id;
+      void data.open(id);
+    }
+    void data.refresh({ order: true, reset: true });
+  }
 </script>
 
-<svelte:window onkeydown={keyboard} />
+<svelte:document onvisibilitychange={visibilityChanged} />
+<svelte:window
+  onkeydown={keyboard}
+  ononline={() => {
+    if (!expired) data.start();
+  }}
+  onpopstate={restoreURL}
+  onbeforeunload={(event) => {
+    if (dirty || quick.title.trim()) event.preventDefault();
+  }}
+/>
 
 <main class="app" inert={expired}>
   <Toolbar
@@ -710,6 +697,7 @@
     bind:this={board}
     {data}
     {visible}
+    {grouped}
     {query}
     {readonly}
     {dirty}
@@ -749,7 +737,6 @@
             onclose={closeDetails}
             onpersist={(id, version, patch) => data.update(id, version, patch)}
             onreload={() => data.loadDetail()}
-            ondirty={(value) => (dirty = value)}
           />
         {/key}
       {:else}

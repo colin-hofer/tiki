@@ -34,7 +34,6 @@
     onclose,
     onpersist,
     onreload,
-    ondirty,
   }: {
     item: Item;
     users: User[];
@@ -51,7 +50,6 @@
     onclose: () => void;
     onpersist: (id: string, version: number, patch: ItemPatch) => Promise<Item>;
     onreload: () => Promise<void>;
-    ondirty: (dirty: boolean) => void;
   } = $props();
   let panel: HTMLElement;
   let base = $state<Item>(untrack(() => item));
@@ -68,6 +66,11 @@
   let dirty = $derived(changed || Boolean(tagInput.trim()));
   let conflict = $derived(Boolean(!saving && item.version > base.version && dirty));
   let canWrite = $derived(!readonly && !deleted);
+  const usersById = $derived(new Map(users.map((user) => [user.id, user])));
+
+  export function hasUnsavedChanges() {
+    return dirty || saving;
+  }
 
   function fill(value: Item) {
     base = value;
@@ -81,9 +84,6 @@
     untrack(() => {
       if (incoming && !pending && incoming.version > base.version) fill(incoming);
     });
-  });
-  $effect(() => {
-    ondirty(dirty || saving);
   });
   $effect(() => {
     // Deriving the patch tracks every field, including continued typing.
@@ -163,7 +163,6 @@
       }
     } finally {
       saving = false;
-      if (!destroyed) ondirty(dirty);
     }
   }
 
@@ -201,10 +200,7 @@
       if (inFlight) await inFlight;
       if (destroyed || composing || suspended) return false;
       if (tagInput.trim() && canWrite) addTag();
-      if (!changed) {
-        ondirty(dirty);
-        return !dirty;
-      }
+      if (!changed) return !dirty;
       if (
         !canWrite ||
         !draft.title.trim() ||
@@ -341,7 +337,7 @@
               <small
                 >{label(item.status)} · {label(item.type)}<br />Tags: {item.tags.join(', ') ||
                   'none'}<br />Assignees: {item.assignees
-                  .map((id) => users.find((u) => u.id === id)?.name || id)
+                  .map((id) => usersById.get(id)?.name || id)
                   .join(', ') || 'none'}</small
               >
             </div>
@@ -407,10 +403,10 @@
           <div class="property-values">
             {#each draft.assignees as id}<span class="person-chip"
                 ><span class="mini-avatar" style:--hue={avatarHue(id)}
-                  >{initials(users.find((u) => u.id === id)?.name || id)}</span
-                >{users.find((u) => u.id === id)?.name || `User ${id}`}{#if canWrite}<button
+                  >{initials(usersById.get(id)?.name || id)}</span
+                >{usersById.get(id)?.name || `User ${id}`}{#if canWrite}<button
                     type="button"
-                    aria-label={`Remove assignee ${users.find((u) => u.id === id)?.name || id}`}
+                    aria-label={`Remove assignee ${usersById.get(id)?.name || id}`}
                     onclick={() => (draft.assignees = draft.assignees.filter((a) => a !== id))}
                     ><Icon name="close" size={12} /></button
                   >{/if}</span
@@ -493,7 +489,7 @@
         readonly={deleted}
         disabled={readonly && !deleted}
         spellcheck="false"></textarea>
-      <ItemActivity {item} {users} {deleted} />
+      <ItemActivity {item} {usersById} {deleted} />
       <div class="detail-meta">
         Created {new Date(base.created_at).toLocaleDateString(undefined, {
           month: 'short',
