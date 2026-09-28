@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { APIError, message } from './api';
   import type { Item } from './api';
-  import type { BoardState } from './board.svelte';
+  import type { BoardState } from './board-state.svelte';
 
   let {
     data,

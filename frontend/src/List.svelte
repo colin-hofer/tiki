@@ -4,7 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { initials, avatarHue, label, statuses } from './api';
   import type { Item, Status } from './api';
-  import type { BoardState } from './board.svelte';
+  import type { BoardState } from './board-state.svelte';
   import Icon from './Icon.svelte';
   import { arrive, capture, duration } from './motion';
 

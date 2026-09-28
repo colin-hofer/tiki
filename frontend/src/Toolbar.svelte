@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { statuses, label, initials, avatarHue } from './api';
   import type { User } from './api';
-  import type { BoardState } from './board.svelte';
+  import type { BoardState } from './board-state.svelte';
   import Select from './Select.svelte';
   import Icon from './Icon.svelte';
   let {
