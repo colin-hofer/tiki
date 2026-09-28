@@ -1,309 +1,82 @@
 # Tiki
 
-A Go CLI and shared HTTP server for tracking work. Items have a sortable `float64` priority, multiple assignees, and generic tags. The architecture and roadmap are in [PLAN.md](PLAN.md).
+Work tracking for humans and their suspiciously confident coding agents.
 
-## Agent skill
+A live web board, CLI, and HTTP API for bugs, features, and tasks. Tags, multiple assignees, comments, and activity history included. Go + Svelte + SQLite, shipped as one binary. No certification in moving rectangles required.
 
-The [Tiki skill](skills/tiki/SKILL.md) is a small entry point that tells your agent to run `tiki skill`. The CLI prints its embedded [instructions](skills/instructions.md), covering commands, explicit-version edits, pagination, and recovery from uncertain writes. Updating the CLI updates those instructions automatically; installed skills need no separate refresh.
+## Run it
 
-- `tiki skill install` installs to `~/.agents/skills/tiki` for agents that read the shared skills directory.
-- `tiki skill install --project` installs into the repository's `.agents/skills/tiki`, ready to commit for teammates. Outside a Git repository, it uses the current directory.
-- `tiki skill install --dir PATH` installs into `PATH/tiki` instead. For example, use `--dir ~/.claude/skills` for Claude Code, or `--dir .claude/skills` for a project skill. `--dir` and `--project` are mutually exclusive.
-- For any agent that can execute commands, add “For Tiki ticket work, run `tiki skill` first” to its instructions. Native skill support is optional.
-
-Installation is local and needs no sign-in or network access. It replaces the chosen `SKILL.md` atomically; rerunning it is harmless. Linked skills are left untouched. `--json` returns `path` and `updated`. There is no harness detection, linking, or legacy migration. Install in the environment where your agent runs; a local home-directory skill is not automatically available to remote agents. Ticket work uses that environment's installed CLI and saved sign-in.
-
-## Local development
-
-Install Go (the version in `go.mod`), Node.js 22.12+ with npm, and Make. From the repository root, run:
-
-```sh
-make dev
-```
-
-Open **http://127.0.0.1:5173**. The first run installs the locked frontend dependencies, builds the Go API, and asks you to choose a password for **dev@tiki.local**. Sign in with that account. Later runs reuse the database and account without prompting.
-
-Frontend edits hot-reload. Go and SQL edits rebuild and restart the API automatically; a compilation error leaves the previous API running until you fix it. Ctrl+C stops both servers. Development data persists in `.dev/tiki.db`, separate from the default `tiki.db`; nothing resets your database on startup. The dev API listens only on `127.0.0.1:8081`. CLI installer downloads are built separately with `make cli`; they do not delay dev startup.
-
-Optional overrides:
-
-```sh
-TIKI_DEV_API_PORT=18081 make dev
-TIKI_DEV_DB=/absolute/path/to/dev.db make dev
-TIKI_API_URL=http://127.0.0.1:8080 make dev  # use an already-running API
-```
-
-To use the CLI against the development server, run `.dev/tiki-api auth login --server http://127.0.0.1:5173 --email dev@tiki.local`. Vite forwards API requests to Go, and invite links use the same browser address. A saved CLI login remembers that address.
-
-## Build and run the complete app
+You'll need Go (see [go.mod](go.mod)), Node.js 22.12+ with npm, and Make to build from source:
 
 ```sh
 make build
-# For a fresh database, create your first administrator once:
-./tiki init --db ./tiki.db --name Colin --email colin@example.com
+./tiki init --db ./tiki.db --name 'Your Name' --email you@example.com
 ./tiki serve --db ./tiki.db
 ```
 
-Open **http://127.0.0.1:8080**. `make build` installs frontend dependencies when needed, checks Svelte/TypeScript, builds the frontend and CLI downloads, and embeds them into the Go binary. The resulting `tiki` serves the UI and API together and needs neither Node nor a `frontend/dist` directory at runtime. Plain `go build` embeds the existing frontend and CLI `dist` outputs; use `make build` to ensure it is current.
+`init` creates the first administrator and prompts for a password; run it once. Open **http://127.0.0.1:8080** and sign in. The built binary includes the UI and CLI downloads; Node can clock out now.
 
-`init` asks for a password and confirmation without displaying what you type. Passwords must contain at least 8 characters and at most 1024 bytes. It creates the first administrator and prints the user, never the password. Use the same `--db` path for `init` and `serve`; the server prints its absolute path on startup. New databases initialize automatically. Existing schema versions 2 through 6 upgrade to version 7 transactionally, preserving tickets and their activity. Version 6’s undeployed comment data is discarded. Newer, unsupported schemas are rejected without resetting the database.
+Admins invite teammates through **Manage people**. Members can edit tickets; viewers can read them. Everyone shares the same workspace—tags organize work, not permissions.
 
-## Deploy to a server
+## Put it to work
 
-For a Linux systemd host with SSH access and a Cloudflare Tunnel pointing to `http://127.0.0.1:8080`:
-
-```sh
-./scripts/deploy.sh root@198.199.122.239
-```
-
-The script authenticates over SSH once, reuses cached builds, and uploads a versioned release for the server's architecture. It installs the systemd service, backs up the database, and checks readiness after restart. An unchanged healthy deployment skips the binary upload and restart. Cleanup retains the active and previous releases, seven recent deployment backups, and any older snapshots needed for those releases; manual backups and live data are preserved. A fresh installation prints the administrator initialization command. Run the same command to deploy updates. See [server setup, backups, and recovery](docs/deployment.md).
-
-In another terminal, sign in and start working:
+In another terminal:
 
 ```sh
-./tiki auth login --email colin@example.com
-./tiki auth status
-./tiki item create --title 'Keep search focused' --type bug --tag frontend
-./tiki item list
+./tiki auth login --email you@example.com
+./tiki item create --title 'Fix the thing we called a feature' --type bug --tag backend --assignee me
+./tiki item list --assignee me
+./tiki item list --query 'thing'
+./tiki item get 123 --json
+./tiki item update 123 --if-version 7 --status in_progress
+./tiki item comment 123 --body 'Found it. Regrettably, it was my code.'
 ```
 
-Login asks for your password and saves the session automatically. No token copying or shell configuration is required. From source after `make frontend cli`, replace `./tiki` with `go run .`. If your sandbox hides Git metadata, build with `-buildvcs=false`.
+Replace `123` and `7` with the ticket ID and version you read. Use `--help` on any command, `--json` for scripts, and `--if-version` when editing previously read tickets to catch conflicting changes.
 
-The default server is `http://127.0.0.1:8080`. Save your workspace address once, then omit it from every command:
+Prefer the browser? Press **?** for shortcuts or **Ctrl/Cmd+K** for the command menu.
 
-```sh
-./tiki config set-server https://tiki.example.com
-./tiki auth login --email colin@example.com
-./tiki item list
-./tiki config show
-```
+## Take the CLI with you
 
-Login with `--server URL` also saves that address. Selection order is `--server`, then `TIKI_SERVER`, then saved config, then the local default. The server setting lives in `tiki/config.json` under the OS configuration directory (`~/.config` on Linux) and survives logout and password changes. Existing session-only settings are still recognized. HTTPS is required for remote servers; HTTP is allowed on loopback for development.
-
-## Install the CLI and agent skill
-
-Open **CLI & agents** in the web toolbar, or **Install CLI & agent skill** in the command menu. The **CLI** tab offers separate install and sign-in commands for the current workspace; the **Agent skill** tab installs the Tiki skill for your coding agents. Every role can use both tabs. For example:
+Open **CLI & agents** in your workspace for installation commands, or replace the example URL below with your server:
 
 ```sh
 curl -fsS 'https://tiki.example.com/api/v1/cli/install.sh' | sh -s -- 'https://tiki.example.com'
 tiki auth login --email you@example.com
 ```
 
-The script detects Linux or macOS on x86-64/ARM64, downloads the matching CLI from your workspace, verifies its SHA-256 checksum, and installs it in `~/.local/bin` without sudo or Go. It saves the workspace URL automatically. If that directory is not on your PATH, the script prints the setup instructions. Sign in with your own password; copied commands contain no session token. Failed downloads or checksum verification leave an existing CLI intact. `TIKI_INSTALL_DIR` can override the destination. The dialog includes a link to read the script before running it.
+The installer supports Linux and macOS on x86-64/ARM64, installs to `~/.local/bin`, and remembers your server. Follow its PATH instructions if needed. Run `tiki update` to match the CLI bundled with that server. Remote servers require HTTPS.
 
-Update an installed CLI to the version bundled with your configured server:
+## Bring your agent
 
-```sh
-tiki update
-tiki update --server https://tiki.example.com  # override the source for this update
-```
-
-Updates need no active login and preserve saved configuration and credentials. The command verifies the download's checksum, unpacks it, and atomically replaces the running executable at its existing location, following symlinks and preserving file permissions. Its directory must be writable. Failed downloads or verification leave the installed CLI intact; identical binaries report “already up to date.” Downloads time out after five minutes by default; override with `--timeout 10m`. `--json` returns `updated`, `path`, and `server`.
-
-The server's bundled CLI is authoritative, even if it is older than your installed copy. Full server and development builds refuse self-updates; rebuild or redeploy those normally. If your installed CLI predates `tiki update`, rerun the installer once to get the command.
-
-`make build` bundles all four compressed CLI downloads and their checksums into the server binary. Builds reuse Go's compiler cache and retain unchanged compressed downloads; `make cli` checks for source changes and refreshes affected bundles. Unchanged frontend builds are also cached. `make dev` builds only the local API; run `make cli` when testing installer downloads, which Vite serves through its existing API proxy. Run it again after CLI source changes to refresh downloads. The installer and downloads are public and served by Tiki itself; no release host or separate file server is required. HTTPS is required outside localhost.
-
-After installing the CLI, install the agent skill:
+Give it the manual. It has enough confidence already.
 
 ```sh
-tiki skill install
+tiki skill install            # install to ~/.agents/skills/tiki
+# Or share the skill with this repository's contributors:
+tiki skill install --project  # install to .agents/skills/tiki
 ```
 
-Then ask your agent about Tiki tickets; start a new session if the skill does not appear. The skill tab includes project and custom-directory commands and a link to read or download `SKILL.md` for manual installation. If an old CLI lacks `tiki skill`, update it first. Earlier skill copies can be deleted and reinstalled in your agent's current skills directory. `make dev` rebuilds the API when files under `skills/` change; production embeds them at build time.
+Use `--dir ~/.claude/skills` for Claude Code. For agents without skill support, add: **“For Tiki ticket work, run `tiki skill` first.”** The CLI carries the [instructions](skills/instructions.md), so updating it keeps the manual current.
 
-## Invite your team
-
-As an administrator, open **Manage people** from the web toolbar or command menu, then choose **Invite people**, or run:
+## Hack on it
 
 ```sh
-./tiki invite create                          # member access, valid for 7 days
-./tiki invite create --role viewer --expires-in 24h
-./tiki invite list                            # active, unclaimed invites
-./tiki invite revoke 1                        # ID returned when creating/listing
+make dev     # UI + API with automatic reloads
+make check   # formatting, lint, builds, Go race tests, browser tests, vet
+make format  # apply formatting
 ```
 
-Share the generated link privately. The recipient opens it, chooses a name, email, and password, and lands on the board signed in. Each link creates exactly one account. Links expire after seven days by default; CLI lifetimes range from one minute to 30 days. Roles are `member` (default), `viewer`, or `admin`. Recipients cannot change the assigned role. Revoke unused links from the CLI or the dialog that created them.
+Development runs at **http://127.0.0.1:5173**. The first run asks you to set a password for **dev@tiki.local**. Data persists in `.dev/tiki.db`, separate from your regular database.
 
-Use the browser-facing workspace address when configuring the CLI: the link uses that address. A loopback link works only on the same computer; team invitations need your reachable HTTPS address. Invite tokens are kept in the URL fragment, out of HTTP URL/access logs, and only their hashes are stored in SQLite. Lists never reveal tokens; create another invite if a link is lost. `invite create --json` returns `id`, `url`, `role`, and `expires_at` for scripts. Other ordinary command output never prints session credentials.
+See the [frontend guide](frontend/README.md) for overrides and browser-test setup. Backend-only checks: `go test -tags dev -race ./...`.
 
-After joining, teammates can run `tiki config set-server https://tiki.example.com` followed by `tiki auth login --email THEIR_EMAIL` to use the CLI with their chosen password.
+## Ship it
 
-## Manage people
-
-The **People** dialog lists names, emails, and roles, with search, role controls, and removal. Admins can also use:
+For a Linux systemd host with SSH access as root (or passwordless sudo):
 
 ```sh
-./tiki user list
-./tiki user role 2 --role viewer
-./tiki user remove 2
+./scripts/deploy.sh root@your-server
 ```
 
-Role changes apply immediately to existing sessions and update open browsers. Removing a user signs them out and prevents further login or assignment; their identity, ticket history, and existing assignments remain available. **Show removed users** includes those identities in the People list. A new invite claimed with the same email restores access with a new password and the invite's role. Old sessions stay revoked. The last active administrator cannot be removed or demoted, including through concurrent requests. Demoting or removing an administrator also revokes their outstanding invitations.
-
-Administrators can provision additional users with an initial password:
-
-```sh
-./tiki user create --name Alex --email alex@example.com
-./tiki item create --title 'Keyboard navigation' --type feature \
-  --tag repo/tiki --assignee 1 --assignee 2
-./tiki item move 2 --before 1
-./tiki item update 1 --add-assignee 2 --status in_progress
-./tiki item get 1 --json
-./tiki item activity 1 --json
-```
-
-Use the IDs returned by commands; the example IDs assume a fresh workspace. New users sign in with their own email and password. `auth password` changes the current user's password, revokes all their sessions, and requires a new login. `auth logout` revokes the current session and removes the saved login.
-
-## Comment on tickets
-
-Members and administrators can post comments from the CLI; every role can read them in the activity history:
-
-```sh
-tiki item comment 123 --body 'Implemented; tests pass.'
-tiki item comment 123 --body-file notes.txt --client-id unique-message-id
-tiki item comment 123 --body-file -  # read from stdin
-tiki item activity 123 --json
-```
-
-Supply exactly one of `--body` or `--body-file`. Comments are trimmed plain UTF-8 text, up to 16 KiB. They use the signed-in author and do not change the ticket's version or require `--if-version`. Success returns the committed activity event with its `client_id` and `data.body`. Activity reads combine changes and comments, oldest first; follow `next_after` with `--after` to continue.
-
-Choose a unique `--client-id` for each new comment and keep it for retries. Retrying the same ID and text on the same ticket, server, and account returns the original comment; different text with that ID fails with a conflict. IDs allow 1–128 ASCII letters, digits, hyphens, or underscores. If omitted, the CLI generates an ID and includes it in success output and request/output failures (`client_id` at the top level of JSON errors). After an uncertain result, reuse that ID with `--client-id` instead of generating another. Use an explicit ID in automation so it remains available even if the process is interrupted before printing a result. The CLI does not retry automatically.
-
-## Authentication
-
-Passwords are stored as salted Argon2id hashes. Successful login creates a random session valid for seven days; the server stores only its hash. The CLI keeps one active login in `tiki/session.json` under the OS user configuration directory (`$XDG_CONFIG_HOME` or `~/.config` on Linux), with file permissions `0600`. It never stores your password. The session is bound to its server address and is not sent through redirects or to a different server.
-
-For scripts and agents, `init`, `auth login`, and `user create` accept `--password-stdin`. Feed the password from your secret manager or a protected file, for example:
-
-```sh
-./tiki auth login --email agent@example.com --password-stdin --json < /secure/path/password
-```
-
-One trailing line ending is removed; spaces within the password are preserved. `--json` never prompts or prints session secrets. Password changes are interactive in the CLI; automation can use the password-change API. Registration requires a valid administrator-created invite; there is no unrestricted sign-up or password-recovery endpoint. Administrators can also create accounts directly.
-
-Login, password-change, invite inspection, and invite-claim requests share a limit of ten attempts per minute per connecting IP, with at most two concurrent password-hashing operations. Forwarded IP headers are not trusted; when behind a reverse proxy, its connecting address shares this limit. Configure HTTPS at that proxy for team access. Session authentication applies to every API route except health, readiness, login, public invite inspection/claim, and CLI/skill installer and download routes.
-
-## Current behavior
-
-- Ticket sidebars interleave comments and ticket changes in one live timeline, with a separate comment composer: Enter sends, Shift+Enter adds a line. Comments are plain text, up to 16 KiB. Members/admins can post and viewers can read. New messages appear immediately, with pending/failed delivery states and safe manual retries. Drafts and uncertain sends are saved per user and ticket in tab storage, with an in-memory fallback. Navigation never sends a draft. History starts with the newest 50 events, loads older events on demand, and catches up after reconnecting. Comments do not change the ticket's edit version.
-- Items support `bug`, `feature`, and `task`. Statuses are `backlog`, `todo`, `in_progress`, `code_review`, `blocked`, `complete`, and `void`.
-- Delete tickets using the detail panel's trash button, the command menu, the touch actions sheet, or `Delete` with a ticket focused. Confirmation permanently removes the ticket, comments, and activity; live boards refresh automatically. Stale versions must be reviewed before deleting, and drafts in other sessions remain available to copy.
-- Priority is a finite `float64`, ordered ascending with ID as the tie-breaker. Creation appends by default. Use `item move ID --before ID` or `--after ID` for positioning; scripts can also specify `--priority`. There are no discrete priority levels.
-- Ordering is workspace-wide. Tag/status filters show a subset of that order; moving relative to an item uses its neighbor in the full workspace. Repeated midpoint insertion eventually exhausts float precision, so the server atomically renumbers priorities while preserving order. That increments item versions and expires existing pagination cursors.
-- Assignment is a set: repeated `--assignee` flags on creation, then `--add-assignee`/`--remove-assignee`. Adding an existing member does not duplicate it. `item list --assignee ID` tests membership; `--assignee none` finds an empty set. Every assignee flag also accepts `me` for the signed-in user; the CLI resolves it with one request.
-- Tags replace separate project and label entities. Names are trimmed/lowercased and created on first use. Repeated `--tag` filters use AND. Use `--add-tag` and `--remove-tag` to edit membership, and `tag list` to discover names. Tags are not access-control boundaries.
-- Open **Manage tags** from the tag filter or command menu to search tags, see their ticket counts, and delete unused or in-use tags. Deletion removes the tag from every ticket while preserving tickets and history; the deleted tag is also removed from active filters.
-- API edits and moves require `version`. CLI `--if-version N` sends a version already read by the caller; otherwise the CLI fetches it immediately before submission. Agents editing previously read content should always pass that version. A stale edit exits with code 4 and reports the current version.
-- Every ticket has a stable web link, `SERVER/?item=ID`, which opens the board with that ticket's details. The server does not know its public hostname, so the CLI and skill build this from the configured server, the same way invite links are built.
-- `item list --query 'words'` searches all tickets: each word must match the title, full description, a tag, or an exact ticket ID (`123`, `#123`, or `TK-123`), case-insensitively for ASCII. Words are literal substrings, not regex or a quoted-phrase syntax. Repeat `--query` for OR, e.g. `--query 'keyboard focus' --query 'tab navigation'` finds either set of words in one deduplicated, priority-ordered result. Other filters apply to all alternatives. At most 5 queries, each with 10 words and 300 characters; blank queries are ignored. Keep all queries when continuing with `--cursor`. Board and list UI search use the same server search and paginate matching results per status.
-- Lists contain metadata, tags, and assignees; `get` includes the description. Item lists default to 50 rows, cap at 200, and return `next_cursor`; pass it as `--cursor`. Users/tags/activity use `next_after` and `--after`. Pagination is live and may shift when items move. Each item permits up to 100 assignees and 100 tags.
-- Description input supports `--description` or `--body-file FILE` (`-` reads stdin), with a 256-KiB limit. Tag names allow up to 64 characters and titles up to 300.
-- Each item holds one optional external link (`url`), such as its pull request: `--link URL` on create or update, `--link ''` to clear. It must be an absolute http(s) URL of at most 2048 characters. Cards show a link icon; the details panel shows the link as `owner/repo#42` for GitHub or GitLab PRs, otherwise the host.
-- Admins invite people to create their own accounts or provision users directly with email/password credentials. Members can edit all items, and viewers can only read. All roles currently share workspace visibility. Logout, expiry, and password changes invalidate sessions on subsequent requests.
-- The account icon at the top right offers name editing, password changes, and sign out for every role. Name changes appear in the shared directory. Password changes require the current password, revoke all sessions, and return to sign-in; an incorrect current password leaves the session active.
-
-There are no automatic write retries. Comment creation supports idempotency through `client_id`; other writes do not. If a create times out after reaching the server, inspect recent items before repeating it.
-
-## HTTP API
-
-Call `POST /api/v1/auth/login` with `email` and `password`; use the returned `session_token` as `Authorization: Bearer <session_token>`. The CLI handles this automatically. The login response also contains `user` and `expires_at` (Unix seconds). JSON IDs are decimal strings so JavaScript clients preserve integer precision. Priorities are JSON numbers. Errors use `{"error":{"code":"...","message":"..."}}`, with `current_version` on stale-edit conflicts.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/cli` | Available CLI platforms. |
-| GET | `/api/v1/cli/install.sh` | Public CLI shell installer. |
-| GET | `/api/v1/cli/downloads/{platform}.gz` | Public compressed CLI; `{platform}.sha256` contains its checksum. |
-| GET | `/api/v1/skills/tiki/SKILL.md` | Public agent skill entry point for manual installation. |
-| POST | `/api/v1/auth/login` | Sign in with email/password. |
-| GET / PATCH | `/api/v1/auth/me` | Get the signed-in user / update only their name with `{"name":"New Name"}` (1–200 UTF-8 bytes after trimming). |
-| POST | `/api/v1/auth/logout` | Revoke the current session. |
-| POST | `/api/v1/auth/password` | Change password using `current_password` and `new_password`; revoke all user sessions. |
-| POST / GET | `/api/v1/invites` | Admin: create (`role`, optional `expires_in` seconds, default 604800) / list active invites. |
-| DELETE | `/api/v1/invites/{id}` | Admin: revoke an unused invite. |
-| POST | `/api/v1/auth/invite` | Public: inspect a link using `{ "token": "..." }`; returns role and expiry. |
-| POST | `/api/v1/auth/join` | Public: consume an invite with `token`, `name`, `email`, `password`; returns the same session shape as login. |
-| POST / GET | `/api/v1/users` | Create a user (name, email, password, optional role) / list identities, including removed users with `removed_at` (Unix seconds). |
-| PATCH / DELETE | `/api/v1/users/{id}` | Admin: set `role` / remove access and revoke sessions, preserving history. |
-| GET | `/api/v1/board` | Initial board snapshot and paginated user/tag directories. |
-| POST / GET | `/api/v1/items` | Create / list items. |
-| GET / PATCH | `/api/v1/items/{id}` | Read / edit an item. |
-| DELETE | `/api/v1/items/{id}` | Member/admin: permanently delete a ticket, comments, and activity; JSON body `{"version":N}` required. Returns `{"deleted":true}`. |
-| POST | `/api/v1/items/{id}/move` | Move before/after another item, optionally changing status atomically. |
-| GET | `/api/v1/items/{id}/activity` | Read the combined timeline of ticket changes and comments. |
-| POST | `/api/v1/items/{id}/comments` | Post plain text with `body` and `client_id`; returns the committed activity event. |
-| GET | `/api/v1/tags` | List tags; `usage=true` includes a `usage` map of names to ticket counts. |
-| DELETE | `/api/v1/tags` | Member/admin: delete a tag everywhere with `{"name":"tag-name"}`; returns `{"deleted":true,"removed_from":N}`. Tickets and history are kept, affected ticket versions increase, and live clients refresh. |
-
-Create body:
-
-```json
-{"title":"Fix keyboard focus","type":"bug","tags":["repo/tiki","frontend"],"assignees":["1","2"]}
-```
-
-Edit and move bodies:
-
-```json
-{"version":1,"add_assignees":["3"],"remove_tags":["frontend"],"status":"code_review"}
-```
-
-```json
-{"version":2,"before":"42","status":"in_progress"}
-```
-
-The move body accepts an optional `status`. When provided, status and priority commit together, with one version check and one activity record. The CLI exposes this as `tiki item move ID --before OTHER_ID --status in_progress`.
-
-`GET /api/v1/board` accepts the same `tag`, `status`, and `assignee` filters as the item list. Its `columns` object maps statuses to item pages from one SQLite read snapshot. Active statuses return up to 100 summaries each; backlog, complete, and void return up to 20 each. An explicit status filter returns up to 100 regardless of status. Summaries omit descriptions. Continue each column through `/items` using that column's `next_cursor` and the same filters. The board endpoint rejects `limit` and `cursor`; it also includes `users` and `tags` page objects (up to 200 entries each), whose `next_after` continues through the corresponding directory endpoint. This reduces a normal web session restore to three API requests: session, event stream, and board.
-
-`GET /api/v1/events` is an authenticated SSE stream using the same bearer token as other endpoints. `ready` asks for an initial snapshot; `change` carries JSON `{ "items": [/* current tickets */], "activity": [/* committed timeline events */], "users": true, "reset": true }` with unused fields omitted. Merge items by ID only when their version is newer, and activity events by `data.group_id || id`, keeping the event with the highest ID. `users` invalidates the user directory, and `reset` requests a fresh snapshot plus activity catch-up. Subscribe before reading the snapshot to avoid missing concurrent edits. Every reconnect starts with `ready`; the stream does not require replay cursors. `expired` closes a revoked/expired session.
-
-Post a comment with `{"body":"Ready for review","client_id":"a-unique-message-id"}`. The server derives its author from authentication and returns an activity event with `id`, `item_id`, `actor_id`, `kind: "comment.created"`, `data: {"body":"Ready for review"}`, `created_at`, and `client_id`. Bodies are trimmed and limited to 16 KiB of UTF-8; client IDs allow 1–128 ASCII letters, digits, hyphens, or underscores. Retrying the same author/ticket/client ID and body returns the original comment; reusing it with different text returns 409. Save the client ID before sending and reuse it on uncertain delivery. The comment is stored directly as one activity record without changing the ticket version.
-
-`GET /api/v1/items/{id}/activity` returns `{ "activity": [...], "next_before": "..." }`, the newest 50 events by default, displayed in ascending ID order. Use `before` to fetch older history. For reconnect recovery use `after` (including `after=0` for an initially empty conversation); continue ascending pages using `next_after`. `before` and `after` are mutually exclusive. Limits range from 1 to 200, with an additional approximate 2-MiB event data budget per page. Merge overlapping history, POST responses, and live events by `data.group_id || id`, keeping the event with the highest ID. Only completed history pages advance the catch-up cursor, so a newer streamed event cannot hide missed events.
-
-Consecutive edits to the same text fields (title, description, or link) by the same actor on a ticket coalesce when saves are less than five minutes apart. The stored entry keeps the latest values and timestamp; intermediate text snapshots are discarded. A different field set, actor, intervening ticket event (including a comment), or longer pause starts a new entry. Status, type, ordering, tag, and assignee changes remain separate. Each replacement has a new increasing event `id` and a stable `data.group_id` containing the first edit's ID, so live updates and catch-up still see every save while the UI keeps one row. No migration or historical cleanup is required; this applies to new saves.
-
-The stream caps concurrent connections at 256, limits each catch-up batch to 64 activity records and approximately 2 MiB of ticket/activity JSON, and sends `reset` if those bounds or a global ordering reset require a new snapshot. Slow writes disconnect after five seconds. Heartbeats every 15 seconds also recheck credentials and catch changes made through another database connection/process. At a reverse proxy, disable response buffering and allow an idle timeout above 15 seconds (`X-Accel-Buffering: no` is already sent). Browser connections use header authentication through streaming fetch, keeping tokens out of URLs.
-
-The item list accepts `tag`, `status`, `assignee` (ID or `none`), `query`, `limit`, and `cursor` query parameters. Repeat `tag` to require multiple tags; repeat `query` to match any alternative (AND between words within each query). `/board` accepts the same search filters. Users accept an ID in `after`; tags accept a name. Each accepts `limit` from 1 to 200; omit it for the default page size. Empty or invalid limits return 400. Successful operations return HTTP 200. Send `Content-Type: application/json` for JSON bodies; other explicit media types return 415. Endpoints that accept JSON require exactly one object; null, unknown fields, and trailing values return 400. Bodies are limited to 2 MiB (413 on overflow). Unknown API routes return JSON 404 errors; unsupported methods return JSON 405 errors with an `Allow` header. Request deadlines return 504. `/healthz` reports process liveness; `/readyz` checks database connectivity and returns 503 when unavailable.
-
-CLI exit codes: 0 success, 1 unexpected failure, 2 validation/flag errors, 3 not found, 4 conflict/expired cursor, 5 authentication/authorization, 6 transport failure, timeout, unavailable service, or rate limit.
-
-## Development
-
-```sh
-make check          # formatting, lint, frontend checks/build, race tests, browser tests, vet, bundled binary
-make format         # apply gofmt and oxfmt
-make lint           # strict oxlint checks for frontend and Node scripts
-make bench          # allocation and timing benchmarks at 10k and 100k items
-```
-
-The same checks run on pushes and pull requests through GitHub Actions. For backend-only work without Node or generated assets, use `go test -tags dev -race ./...`. The `dev` build tag omits embedded UI assets; full integration checks use the real frontend build. In environments with hidden Git metadata, set `GOFLAGS=-buildvcs=false`. Browser checks run as part of `make check`, or separately with `make test-web`; see [frontend/README.md](frontend/README.md) for Chromium setup.
-
-Tests use temporary SQLite databases and loopback HTTP servers. They cover permissions, single-use and concurrent invite claims, role changes and removal, concurrent last-admin protection, persistent CLI server settings, session lifecycle, membership rollback, persistence, pagination, concurrent edits through independent stores, read/write overlap, snapshot isolation, per-connection read-only settings, float rebalancing, bounded requests/responses, CLI stdin and exit codes, and redirect protection. To fuzz wire IDs:
-
-```sh
-go test ./internal/tiki -run '^$' -fuzz FuzzID -fuzztime 10s -parallel 2
-```
-
-Measured results and reproduction details are in [docs/performance.md](docs/performance.md). These local benchmarks do not establish the production workload targets in the plan.
-
-## Code organization
-
-| Package | Responsibility |
-| --- | --- |
-| `internal/tiki` | Domain types and limits, input validation, accounts/sessions, explicit SQL, ordering, pagination, and transactional activity. No HTTP or CLI dependencies. |
-| `internal/httpapi` | UI/API routing, authentication and role checks, request limits, JSON errors, and health/readiness probes. |
-| `frontend` | Svelte/TypeScript UI, Vite development integration, and the Go handler for embedded assets. |
-| `internal/cli` | Cobra commands, server startup/shutdown, HTTP requests, saved credentials, and terminal/JSON output. |
-| `main.go` | Process entry point. |
-
-`httpapi/http.go` lists routes and permissions together; feature handlers call the store through shared JSON and pagination helpers. The CLI uses typed responses and one HTTP client. Domain types (`ID`, `Status`, `ItemType`, and `Role`) define the shared contract.
-
-Keep business rules in the store and transport rules in the adapters. The store is a trusted in-process API: HTTP authorization belongs in `httpapi`, and all remote clients, including the web UI, must use that boundary. Concrete types and ordinary functions are sufficient; there is no repository interface, ORM, dependency injection container, or generated layer.
-
-SQLite uses WAL and `synchronous=FULL`. One connection serializes immediate write transactions, while a separate read-only pool has between two and eight connections, bounded by `GOMAXPROCS`. Every connection enables foreign keys and a five-second busy timeout. Item lists read ordering generation and rows in one deferred snapshot, so rebalancing cannot mix generations within a page. Reads do not acquire the writer lock. Mutations check versions and write activity inside the same transaction. Description previews examine at most the first 560 source runes and emit up to 140 runes plus an ellipsis, with the same result in lists, details, and live updates.
-
-`internal/tiki/schema.sql` is the immutable version 2 baseline. Numbered SQL files in `internal/tiki/migrations/` upgrade it to the current schema (version 7). Opening the database applies all pending migrations in one immediate transaction, including the version update; any error rolls back the whole upgrade. Concurrent opens serialize, and schemas newer than the binary are rejected. Add a new numbered SQL file and increment `schemaVersion` in `migrations.go` for future changes; never edit an applied migration. Version 1 predates the available schema history and is not supported. Shutdown stops HTTP requests before closing the pools. Use local storage, and use a SQLite-consistent backup mechanism rather than copying a running database's main file.
-
-The web UI receives committed ticket snapshots and timeline events over SSE and merges them without polling or refetching each ticket. Bulk operations and backup/export commands remain roadmap work. No parent ID or nesting is implemented.
+Put an HTTPS reverse proxy or Cloudflare Tunnel in front of `127.0.0.1:8080`. The [deployment scripts](scripts/install-server.sh) check host dependencies, install the service, back up existing data, and check readiness on updates. A fresh install prints the administrator setup command. Rerun to deploy changes.
