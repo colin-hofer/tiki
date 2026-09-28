@@ -12,9 +12,22 @@ import (
 	"tiki/internal/tiki"
 )
 
-func ids(values []string) ([]tiki.ID, error) {
+// ids parses user IDs; "me" resolves to the signed-in user with one request.
+func (a *app) ids(ctx context.Context, values []string) ([]tiki.ID, error) {
 	out := make([]tiki.ID, 0, len(values))
+	var me tiki.ID
 	for _, value := range values {
+		if value == "me" {
+			if me == 0 {
+				var user tiki.User
+				if err := a.request(ctx, "GET", "/api/v1/auth/me", nil, &user); err != nil {
+					return nil, err
+				}
+				me = user.ID
+			}
+			out = append(out, me)
+			continue
+		}
 		id, err := tiki.ParseID(value)
 		if err != nil {
 			return nil, err
@@ -92,10 +105,10 @@ func (a *app) createItem() *cobra.Command {
 	f.StringVar(&status, "status", "backlog", "Initial status")
 	f.Float64Var(&priority, "priority", 0, "Explicit finite rank; lower appears first")
 	f.StringArrayVar(&tags, "tag", nil, "Tag; repeat to add several")
-	f.StringArrayVar(&assignees, "assignee", nil, "User ID; repeat for multiple assignees")
+	f.StringArrayVar(&assignees, "assignee", nil, "User ID or me; repeat for multiple assignees")
 	c.MarkFlagsMutuallyExclusive("description", "body-file")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
-		assigned, err := ids(assignees)
+		assigned, err := a.ids(cmd.Context(), assignees)
 		if err != nil {
 			return err
 		}
@@ -126,7 +139,7 @@ func (a *app) listItems() *cobra.Command {
 	c.Flags().StringArrayVar(&tags, "tag", nil, "Required tag; repeated tags use AND")
 	c.Flags().StringVar(&status, "status", "", "Status filter")
 	c.Flags().StringVar(&query, "query", "", "Words that must all appear in the title (case-insensitive)")
-	c.Flags().StringVar(&assignee, "assignee", "", "User ID, or none for unassigned items")
+	c.Flags().StringVar(&assignee, "assignee", "", "User ID, me, or none for unassigned items")
 	c.Flags().StringVar(&cursor, "cursor", "", "Next cursor from a previous page")
 	c.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -136,6 +149,13 @@ func (a *app) listItems() *cobra.Command {
 		}
 		if status != "" {
 			q.Set("status", status)
+		}
+		if assignee == "me" {
+			me, err := a.ids(cmd.Context(), []string{assignee})
+			if err != nil {
+				return err
+			}
+			assignee = me[0].String()
 		}
 		if assignee != "" {
 			q.Set("assignee", assignee)
@@ -182,8 +202,8 @@ func (a *app) updateItem() *cobra.Command {
 	f.Float64Var(&priority, "priority", 0, "Explicit finite rank; prefer item move for relative ordering")
 	f.StringArrayVar(&addTags, "add-tag", nil, "Add a tag (repeatable)")
 	f.StringArrayVar(&removeTags, "remove-tag", nil, "Remove a tag (repeatable)")
-	f.StringArrayVar(&addUsers, "add-assignee", nil, "Add a user ID (repeatable)")
-	f.StringArrayVar(&removeUsers, "remove-assignee", nil, "Remove a user ID (repeatable)")
+	f.StringArrayVar(&addUsers, "add-assignee", nil, "Add a user ID or me (repeatable)")
+	f.StringArrayVar(&removeUsers, "remove-assignee", nil, "Remove a user ID or me (repeatable)")
 	f.Int64Var(&version, "if-version", 0, "Expected version; otherwise fetch immediately before editing")
 	c.MarkFlagsMutuallyExclusive("description", "body-file")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -192,10 +212,10 @@ func (a *app) updateItem() *cobra.Command {
 			return err
 		}
 		in := tiki.UpdateItem{AddTags: addTags, RemoveTags: removeTags}
-		if in.AddAssignees, err = ids(addUsers); err != nil {
+		if in.AddAssignees, err = a.ids(cmd.Context(), addUsers); err != nil {
 			return err
 		}
-		if in.RemoveAssignees, err = ids(removeUsers); err != nil {
+		if in.RemoveAssignees, err = a.ids(cmd.Context(), removeUsers); err != nil {
 			return err
 		}
 		if f.Changed("title") {
