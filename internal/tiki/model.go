@@ -139,6 +139,7 @@ type Filter struct {
 	Assignee   ID
 	Unassigned bool
 	Status     Status
+	Query      string
 	Limit      int
 	Cursor     string
 }

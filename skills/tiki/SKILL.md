@@ -33,6 +33,7 @@ Examples use illustrative IDs and tags; substitute values actually returned by T
 ```sh
 tiki --json item list --tag repo/tiki --status todo --limit 20
 tiki --json item list --tag repo/tiki --assignee none --limit 20
+tiki --json item list --query 'keyboard focus' --limit 20
 tiki --json item get 123
 tiki --json item activity 123 --limit 20
 tiki --json user list --limit 50
@@ -43,7 +44,7 @@ tiki --json tag list --limit 50
 - Lists return `items` and optional `next_cursor`. Continue with `--cursor` and the same filters. Users, tags, and activity return `next_after`, continued with `--after`. Stop when the cursor is absent or the task has enough information. A partial page is not proof that no match exists.
 - Pages default to 50 and cap at 200. Pagination is live: concurrent moves can shift results. Deduplicate by ID when collecting multiple pages.
 - Repeated `--tag` filters use AND. Tags are trimmed/lowercased. IDs are decimal strings in JSON; preserve them without floating-point conversion.
-- Item lists are priority-ordered, not newest-first. Full-text search is not currently available. For a title lookup, inspect bounded filtered pages and report incomplete coverage rather than claiming a global absence.
+- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items whose title contains every word, case-insensitively; it does not search descriptions. Before creating a ticket, run two or three short `--query` variants to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
 
 ## Create and edit
 
@@ -89,6 +90,6 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/activity. Comments, full-text search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity is a change history, not a writable comment feed. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
+The CLI currently provides item create/get/list/update/move/activity. Comments, description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity is a change history, not a writable comment feed. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
 
 Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent ticket URLs, successful writes, or completion evidence.

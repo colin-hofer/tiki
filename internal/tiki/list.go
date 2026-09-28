@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type cursor struct {
@@ -44,12 +46,18 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	if err != nil {
 		return out, err
 	}
+	// ponytail: title-only substring match with ASCII case folding; FTS5 if descriptions or ranking are needed.
+	words := strings.Fields(strings.ToLower(f.Query))
+	if len(words) > 10 || len(f.Query) > 300 || !utf8.ValidString(f.Query) || strings.ContainsFunc(f.Query, unicode.IsControl) {
+		return out, invalid("query must be at most 300 characters and 10 words without control characters")
+	}
 	fingerprint, _ := json.Marshal(struct {
 		Tags       []string
 		Status     Status
 		Assignee   ID
 		Unassigned bool
-	}{tags, f.Status, f.Assignee, f.Unassigned})
+		Words      []string
+	}{tags, f.Status, f.Assignee, f.Unassigned, words})
 	filterHash := sha256.Sum256(fingerprint)
 	filterKey := hex.EncodeToString(filterHash[:])
 	var c cursor
@@ -85,6 +93,10 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	for _, tag := range tags {
 		where = append(where, "EXISTS(SELECT 1 FROM item_tags it WHERE it.item_id=i.id AND it.tag_id=(SELECT id FROM tags WHERE name=?))")
 		args = append(args, tag)
+	}
+	for _, word := range words {
+		where = append(where, "instr(lower(i.title),?)>0")
+		args = append(args, word)
 	}
 	if f.Cursor != "" {
 		where = append(where, "(i.priority,i.id)>(?,?)")

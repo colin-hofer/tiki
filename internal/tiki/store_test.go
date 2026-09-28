@@ -37,6 +37,28 @@ func addItem(t *testing.T, s *Store, actor ID, title string) Item {
 	return i
 }
 
+func TestTitleQuery(t *testing.T) {
+	s, admin := fixture(t)
+	for _, title := range []string{"First", "Unassigned", "Fix keyboard focus"} {
+		addItem(t, s, admin.ID, title)
+	}
+	for query, want := range map[string]int{"  FOCUS keyboard ": 1, "first": 1, "focus first": 0, "": 3} {
+		p, err := s.List(t.Context(), Filter{Query: query})
+		if err != nil || len(p.Items) != want {
+			t.Fatalf("query %q: %+v, %v", query, p, err)
+		}
+	}
+	_, err := s.List(t.Context(), Filter{Query: "a\tb"})
+	requireCode(t, err, "validation")
+	// A cursor issued for one query must not continue another.
+	p, err := s.List(t.Context(), Filter{Query: "f", Limit: 1})
+	if err != nil || p.NextCursor == "" {
+		t.Fatalf("paged query: %+v, %v", p, err)
+	}
+	_, err = s.List(t.Context(), Filter{Query: "first", Limit: 1, Cursor: p.NextCursor})
+	requireCode(t, err, "validation")
+}
+
 func requireCode(t *testing.T, err error, code string) {
 	t.Helper()
 	var api *Error
