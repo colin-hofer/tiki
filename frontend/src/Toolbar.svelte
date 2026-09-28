@@ -71,8 +71,9 @@
   <span class="wordmark"><span class="logo-mark" aria-hidden="true"></span>tiki</span>
   <div class="search-field" class:open={searchOpen || Boolean(query)}>
     <Icon name="search" size={14} /><input
-      aria-label="Search loaded items"
-      placeholder="Filter loaded items…"
+      aria-label="Search tickets"
+      placeholder="Search tickets…"
+      maxlength="300"
       bind:value={query}
       bind:this={searchInput}
       oninput={onquery}
@@ -216,7 +217,7 @@
   <button
     class="icon-button"
     aria-label="Commands"
-    title="Commands (Ctrl/Cmd+K)"
+    title="Commands (Ctrl/Cmd+K or :)"
     onclick={oncommands}
     ><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"
       ><Icon name="more" size={18} /></span

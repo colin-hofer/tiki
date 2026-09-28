@@ -46,26 +46,26 @@ Keep server synchronization out of view components and DOM operations out of the
 
 The board keeps one ticket in the Tab order; arrows move between tickets without tabbing through every card. Focus follows moved tickets and falls back to a visible card or column when filters hide them. Empty columns never keep a different column's ticket selected.
 
-| Motion                                     | Keys                                  |
-| ------------------------------------------ | ------------------------------------- |
-| Previous / next ticket                     | ↑ / ↓ or K / J                        |
-| Previous / next column                     | ← / → or H / L                        |
-| First / last loaded ticket in column       | Home / End or gg / G                  |
-| Jump to a visible column                   | 1–7                                   |
-| Open ticket                                | Enter                                 |
-| Open ticket and focus comments             | C                                     |
-| Create in current column                   | N                                     |
-| Edit title / description                   | E or I / D                            |
-| Assign / assign or unassign yourself       | A / M                                 |
-| Change status / tags / type                | S / T / Y                             |
-| Reorder within column                      | Alt+↑/↓ or Shift+K/J                  |
-| Move to adjacent status                    | Alt+←/→ or Shift+H/L                  |
-| Search loaded tickets / focus first result | /, then Enter or ↓                    |
-| Command palette / shortcut guide           | Ctrl/Cmd+K / ?                        |
-| Refresh and apply current order            | R                                     |
-| Previous / next open ticket                | [ / ] or K / J outside a field        |
-| Switch board and details (or search)       | F6                                    |
-| Save immediately / save and close          | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
+| Motion                               | Keys                                  |
+| ------------------------------------ | ------------------------------------- |
+| Previous / next ticket               | ↑ / ↓ or K / J                        |
+| Previous / next column               | ← / → or H / L                        |
+| First / last loaded ticket in column | Home / End or gg / G                  |
+| Jump to a visible column             | 1–7                                   |
+| Open ticket                          | Enter                                 |
+| Open ticket and focus comments       | C                                     |
+| Create in current column             | N                                     |
+| Edit title / description             | E or I / D                            |
+| Assign / assign or unassign yourself | A / M                                 |
+| Change status / tags / type          | S / T / Y                             |
+| Reorder within column                | Alt+↑/↓ or Shift+K/J                  |
+| Move to adjacent status              | Alt+←/→ or Shift+H/L                  |
+| Search tickets / focus first result  | /, then Enter or ↓                    |
+| Command palette / shortcut guide     | Ctrl/Cmd+K or : / ?                   |
+| Refresh and apply current order      | R                                     |
+| Previous / next open ticket          | [ / ] or K / J outside a field        |
+| Switch board and details (or search) | F6                                    |
+| Save immediately / save and close    | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
 
 Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; closing or switching tickets finishes pending saves first. Invalid fields, failed saves, and conflicts keep the panel open until resolved. On narrow screens, Tab stays inside details and F6 finishes pending saves and returns to the board.
 
@@ -77,7 +77,9 @@ The item panel saves automatically: title and description changes save after 500
 
 Drag above or below a card to reorder, including across statuses; dropping on a column changes status. Cross-column card drops use one move request that commits status and priority in the same transaction, with one version check and one item activity record. Ordering uses the API's workspace-wide before/after semantics.
 
-One `/api/v1/board` request loads the initial tickets, users, and tags. Active columns start with up to 100 tickets each; backlog, complete, and void start with 20 each. Selecting a status explicitly raises its preview to 100. Each column retains an explicit Load more control. A normal session restore uses three API requests: `/auth/me`, `/events`, and `/board`; directories larger than 200 entries and a directly opened ticket need additional requests. Text filtering, first/last jumps, and next/previous details cover loaded items only. Tag and assignee filtering use the API. Filters and open items are URL state; conflicts preserve drafts and offer explicit reconciliation.
+One `/api/v1/board` request loads the initial tickets, users, and tags. Active columns start with up to 100 tickets each; backlog, complete, and void start with 20 each. Selecting a status explicitly raises its preview to 100. Scrolling to a column or group's footer automatically appends the next 100 tickets using its cursor; Load more and retry buttons remain available. Down/J at the last loaded ticket and next-ticket navigation in details load the next page before continuing. First/last jumps cover loaded tickets. Page requests are deduplicated, and failed loads preserve existing tickets. Live refreshes retain the loaded page depth and existing card elements.
+
+Locally created tickets outside the loaded range stay visible at the top until their normal page is loaded, without changing their saved priority. Refreshes check these tickets so remote edits and deletions also apply. Creating a ticket clears text search; tag and assignee filters still become creation defaults. Search is debounced and runs on the server across all tickets matching the current filters. Every search word must match a title, tag, or exact ticket ID (`123`, `#123`, or `TK-123`); descriptions are not searched. Search and filter changes cancel old reads and restart pagination. Filters and open items are URL state; conflicts preserve drafts and offer explicit reconciliation.
 
 ## Live updates and authentication
 

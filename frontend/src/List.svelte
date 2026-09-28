@@ -6,6 +6,7 @@
   import type { Item, Status } from './api';
   import type { BoardState } from './board-state.svelte';
   import Icon from './Icon.svelte';
+  import LoadMore from './LoadMore.svelte';
   import { arrive, capture, duration } from './motion';
 
   let {
@@ -49,7 +50,6 @@
   const columns = $derived(data.columns);
   const openId = $derived(data.ticket.id);
   const cursors = $derived(data.cursors);
-  const busy = $derived(data.busy || Boolean(data.writing));
   const hasLoaded = $derived(data.hasLoaded);
   const moving = $derived(Boolean(data.writing));
   const collapsed = new SvelteSet<Status>(readCollapsed());
@@ -141,6 +141,11 @@
   export async function move(direction: number) {
     if (!selected) return;
     const item = selected;
+    if (direction > 0 && item === grouped[item.status].at(-1) && cursors[item.status]) {
+      await data.more(item.status);
+      if (selectedId !== item.id || data.pageErrors[item.status]) return;
+      if (item === grouped[item.status].at(-1) && cursors[item.status]) return;
+    }
     const group = grouped[item.status];
     const anchor = group[group.indexOf(item) + direction];
     if (anchor) return onmove(item, anchor, direction < 0);
@@ -156,6 +161,20 @@
     activeColumn = status;
     selectedId = '';
     focusElement(list.querySelector<HTMLElement>(`#column-${status}`));
+  }
+
+  async function nextPage(item: Item) {
+    const focused = document.activeElement;
+    await data.more(item.status);
+    await tick();
+    if (selectedId !== item.id || document.activeElement !== focused) return;
+    const group = grouped[item.status];
+    const next = group[group.findIndex((row) => row.id === item.id) + 1];
+    if (next) focusItem(next);
+    else if (!cursors[item.status]) {
+      const status = columns[columns.indexOf(item.status) + 1];
+      if (status) focusHeader(status);
+    }
   }
 
   export function handleKey(event: KeyboardEvent) {
@@ -205,6 +224,15 @@
         return;
       }
       // Walk the list as it reads, top to bottom: each group header, then its rows.
+      if (
+        direction > 0 &&
+        selected &&
+        selected === grouped[selected.status].at(-1) &&
+        cursors[selected.status]
+      ) {
+        void nextPage(selected);
+        return;
+      }
       const stops = columns.flatMap((status) => [
         status,
         ...(collapsed.has(status) ? [] : grouped[status]),
@@ -409,16 +437,15 @@
           </p>{:else if !groupItems.length && quick.status !== status}<p class="column-empty">
             {query ? 'No matches' : 'No tickets'}
           </p>{/if}
-        {#if cursors[status]}<button
-            class="load-more"
-            disabled={busy}
+        {#if cursors[status]}<LoadMore
+            {data}
+            {status}
             onfocus={() => {
               activeColumn = status;
               selectedId = '';
               preferredRow = Math.max(0, groupItems.length - 1);
             }}
-            onclick={() => data.more(status)}>Load more</button
-          >{/if}
+          />{/if}
       {/if}
     </section>
   {/each}

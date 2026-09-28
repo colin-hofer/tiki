@@ -5,11 +5,27 @@ export interface Filters {
   status: Status | '';
   tag: string;
   assignee: string;
+  query?: string;
+}
+
+export function matchesQuery(item: Item, query = '') {
+  // Match SQLite's ASCII case folding and the API's word-by-word search.
+  const lower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return lower(query)
+    .trim()
+    .split(/\s+/)
+    .every(
+      (word) =>
+        lower(item.title).includes(word) ||
+        item.tags.some((tag) => tag.includes(word)) ||
+        item.id === word.replace(/^#/, '').replace(/^tk-/, ''),
+    );
 }
 
 export function matchesFilters(item: Item, filters: Filters) {
   const { status, tag, assignee } = filters;
   return (
+    matchesQuery(item, filters.query) &&
     (!status || item.status === status) &&
     (!tag || item.tags.includes(tag)) &&
     (!assignee ||

@@ -9,6 +9,14 @@ function queryFor(filters: Filters) {
   return new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
 }
 
+export function readNext(status: Status, filters: Filters, cursor: string, signal: AbortSignal) {
+  const query = queryFor(filters);
+  query.set('status', status);
+  query.set('cursor', cursor);
+  query.set('limit', '100');
+  return api<Page>(`/items?${query}`, 'GET', undefined, signal);
+}
+
 export async function readDirectory(signal: AbortSignal, board?: Board) {
   const [users, tags] = await Promise.all([
     directory<User>('/users', 'users', board?.users.users, board?.users.next_after, signal),

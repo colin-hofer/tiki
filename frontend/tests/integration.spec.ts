@@ -1,6 +1,61 @@
 import { test, expect } from '@playwright/test';
 import type { Item, Session } from '../src/api';
 
+test('real Go API: search and paging reach every backlog ticket, including a new one', async ({
+  page,
+  context,
+  request,
+}) => {
+  const login = await request.post('/api/v1/auth/login', {
+    data: { email: 'browser@example.test', password: 'browser-test-password' },
+  });
+  expect(login.ok()).toBeTruthy();
+  const session: Session = await login.json();
+  const headers = { Authorization: `Bearer ${session.session_token}` };
+  await context.addInitScript(
+    (token) => sessionStorage.setItem('tiki.session', token),
+    session.session_token,
+  );
+  const tag = `pagination-${crypto.randomUUID()}`;
+  let last!: Item;
+  for (let n = 0; n < 25; n++) {
+    const response = await request.post('/api/v1/items', {
+      headers,
+      data: {
+        title: n === 24 ? 'Buried search needle' : `Paged backlog ${n}`,
+        status: 'backlog',
+        tags: [tag],
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    last = await response.json();
+  }
+  await page.goto(`/?tag=${tag}`);
+  const column = page.locator('[data-column="backlog"]');
+  await expect(column.locator('[data-ticket]')).toHaveCount(20);
+  await page.getByLabel('Search tickets').fill('needle');
+  await expect(column.locator('[data-ticket]')).toHaveCount(1);
+  await expect(page.locator(`#ticket-${last.id}`)).toBeVisible();
+  await page.getByLabel('Search tickets').fill('');
+  await expect(column.locator('[data-ticket]')).toHaveCount(20);
+  await page.getByRole('button', { name: 'Add item to Backlog', exact: true }).click();
+  await page.getByLabel('New item title').fill('Fresh backlog ticket');
+  const saved = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && response.url().endsWith('/items'),
+  );
+  await page.getByLabel('New item title').press('Enter');
+  const created: Item = await (await saved).json();
+  expect(created.priority).toBeGreaterThan(last.priority);
+  await expect(page.locator(`#ticket-${created.id}`)).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Refresh board', exact: true }).click();
+  await expect(column.locator('[data-ticket]')).toHaveCount(21);
+  await column.locator('.load-more').scrollIntoViewIfNeeded();
+  await expect(column.locator('[data-ticket]')).toHaveCount(26);
+  await expect(column.locator('[data-ticket]').last()).toHaveAttribute('data-ticket', created.id);
+  await expect(column.locator('.load-more')).toHaveCount(0);
+});
+
 test('real Go API: sign in, autosave, atomic move, live update, and reload', async ({
   page,
   request,

@@ -44,7 +44,7 @@ tiki --json tag list --limit 50
 - Lists return `items` and optional `next_cursor`. Continue with `--cursor` and the same filters. Users, tags, and activity return `next_after`, continued with `--after`. Stop when the cursor is absent or the task has enough information. A partial page is not proof that no match exists.
 - Pages default to 50 and cap at 200. Pagination is live: concurrent moves can shift results. Deduplicate by ID when collecting multiple pages.
 - Repeated `--tag` filters use AND. Tags are trimmed/lowercased. IDs are decimal strings in JSON; preserve them without floating-point conversion.
-- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items whose title contains every word, case-insensitively; it does not search descriptions. Before creating a ticket, run two or three short `--query` variants to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
+- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items where every word matches the title, a tag, or an exact ticket ID (`123`, `#123`, or `TK-123`), case-insensitively for ASCII; it does not search descriptions. Before creating a ticket, run two or three short `--query` variants to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
 
 ## Create and edit
 

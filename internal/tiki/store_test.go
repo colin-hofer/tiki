@@ -60,6 +60,33 @@ func TestTitleQuery(t *testing.T) {
 	requireCode(t, err, "validation")
 }
 
+func TestSearchFindsTicketsBeyondTheFirstPage(t *testing.T) {
+	s, admin := fixture(t)
+	for range 25 {
+		addItem(t, s, admin.ID, "Earlier ticket")
+	}
+	target, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Buried release work", Tags: []string{"repo/tiki"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"buried RELEASE", target.ID.String(), "#" + target.ID.String(), "TK-" + target.ID.String(), "repo/tiki", "release tiki"} {
+		board, err := s.Board(t.Context(), Filter{Query: query})
+		if err != nil || len(board[StatusBacklog].Items) != 1 || board[StatusBacklog].Items[0].ID != target.ID {
+			t.Fatalf("query %q missed buried ticket: %+v, %v", query, board, err)
+		}
+	}
+	board, err := s.Board(t.Context(), Filter{Query: "earlier"})
+	if err != nil || len(board[StatusBacklog].Items) != 20 || board[StatusBacklog].NextCursor == "" {
+		t.Fatalf("search is not paginated: %+v, %v", board, err)
+	}
+	page, err := s.List(t.Context(), Filter{Status: StatusBacklog, Query: "earlier", Cursor: board[StatusBacklog].NextCursor})
+	if err != nil || len(page.Items) != 5 {
+		t.Fatalf("search continuation: %+v, %v", page, err)
+	}
+	_, err = s.List(t.Context(), Filter{Status: StatusBacklog, Query: "release", Cursor: board[StatusBacklog].NextCursor})
+	requireCode(t, err, "validation")
+}
+
 func TestItemLink(t *testing.T) {
 	s, admin := fixture(t)
 	i := addItem(t, s, admin.ID, "Linked")

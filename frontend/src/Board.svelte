@@ -5,6 +5,7 @@
   import type { Item, Status } from './api';
   import type { BoardState } from './board-state.svelte';
   import Icon from './Icon.svelte';
+  import LoadMore from './LoadMore.svelte';
   import { arrive, capture, duration, pin, unpin } from './motion';
 
   let {
@@ -54,7 +55,6 @@
   const selected = $derived(visible.find((item) => item.id === selectedId));
   const openId = $derived(data.ticket.id);
   const cursors = $derived(data.cursors);
-  const busy = $derived(data.busy || Boolean(data.writing));
   const hasLoaded = $derived(data.hasLoaded);
   const moving = $derived(Boolean(data.writing));
   let preferredRow = 0;
@@ -428,10 +428,26 @@
     );
   }
   export async function move(direction: number) {
-    const column = grouped[activeColumn];
-    const index = column.findIndex((i) => i.id === selectedId);
+    const item = selected;
+    if (!item) return;
+    if (direction > 0 && item === grouped[item.status].at(-1) && cursors[item.status]) {
+      await data.more(item.status);
+      if (selectedId !== item.id || data.pageErrors[item.status]) return;
+    }
+    const column = grouped[item.status];
+    const index = column.findIndex((i) => i.id === item.id);
     const anchor = column[index + direction];
-    if (selected && anchor) await onmove(selected, anchor, direction < 0);
+    if (anchor) await onmove(item, anchor, direction < 0);
+  }
+
+  async function nextPage(status: Status, id: string) {
+    const focused = document.activeElement;
+    await data.more(status);
+    await tick();
+    if (selectedId !== id || document.activeElement !== focused) return;
+    const column = grouped[status];
+    const index = column.findIndex((item) => item.id === id);
+    if (column[index + 1]) focusColumn(status, index + 1);
   }
 
   export function handleKey(event: KeyboardEvent) {
@@ -475,6 +491,10 @@
       }
       const column = grouped[activeColumn];
       const index = column.findIndex((i) => i.id === selectedId);
+      if (direction > 0 && index === column.length - 1 && cursors[activeColumn]) {
+        void nextPage(activeColumn, selectedId);
+        return;
+      }
       focusColumn(
         activeColumn,
         Math.min(Math.max(index + direction, 0), Math.max(0, column.length - 1)),
@@ -698,16 +718,15 @@
           </p>{:else if !columnItems.length && quick.status !== status}<p class="column-empty">
             {query ? 'No matches' : 'No tickets'}
           </p>{/if}
-        {#if cursors[status]}<button
-            class="load-more"
-            disabled={busy}
+        {#if cursors[status]}<LoadMore
+            {data}
+            {status}
             onfocus={() => {
               activeColumn = status;
               selectedId = '';
               preferredRow = Math.max(0, columnItems.length - 1);
             }}
-            onclick={() => data.more(status)}>Load more</button
-          >{/if}
+          />{/if}
       </div>
     </section>
   {/each}

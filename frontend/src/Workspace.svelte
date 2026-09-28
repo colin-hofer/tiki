@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { APIError, message, statuses, label } from './api';
   import type { Item, ItemPatch, ItemType, User, Status } from './api';
@@ -43,6 +43,7 @@
     status: statuses.find((status) => status === initialURL.searchParams.get('status')) || '',
     tag: initialURL.searchParams.get('tag') || '',
     assignee: initialURL.searchParams.get('assignee') || '',
+    query: initialURL.searchParams.get('q') || '',
   };
   ticket.id = initialURL.searchParams.get('item') || '';
   let selectedId = $state(ticket.id);
@@ -75,14 +76,7 @@
   const readonly = $derived(user.role === 'viewer');
   const moving = $derived(Boolean(data.writing));
   const columns = $derived(data.columns);
-  const visible = $derived.by(() => {
-    const text = query.toLowerCase().trim().replace(/^#/, '').replace(/^tk-/, '');
-    return text
-      ? data.items.filter((item) =>
-          `${item.id} ${item.title} ${item.tags.join(' ')}`.toLowerCase().includes(text),
-        )
-      : data.items;
-  });
+  const visible = $derived(data.visibleItems);
   const selected = $derived(visible.find((item) => item.id === selectedId));
   const grouped = $derived(groupItems(visible));
   const boardItems = $derived(columns.flatMap((status) => grouped[status]));
@@ -130,7 +124,7 @@
   }
   let actions = $derived([
     ...(!readonly ? [{ id: 'new', label: 'Create a ticket', hint: 'N', run: () => create() }] : []),
-    { id: 'search', label: 'Search loaded tickets', hint: '/', run: () => toolbar.focusSearch() },
+    { id: 'search', label: 'Search tickets', hint: '/', run: () => toolbar.focusSearch() },
     {
       id: 'view',
       label: layout === 'list' ? 'Switch to board view' : 'Switch to list view',
@@ -323,6 +317,19 @@
   }
 
   async function adjacentItem(direction: number) {
+    const current = ticket.item;
+    if (
+      direction > 0 &&
+      current &&
+      grouped[current.status].at(-1)?.id === current.id &&
+      data.cursors[current.status]
+    ) {
+      if (!(await guardDraft())) return;
+      await data.more(current.status);
+      await tick();
+      if (ticket.id !== current.id || data.pageErrors[current.status]) return;
+      if (grouped[current.status].at(-1)?.id === current.id && data.cursors[current.status]) return;
+    }
     const next = boardItems[openedIndex + direction];
     if (openedIndex >= 0 && next) {
       await openItem(next.id, false);
@@ -451,6 +458,10 @@
           : [],
       });
       quick.title = '';
+      if (query) {
+        query = '';
+        filterChanged();
+      }
       selectedId = item.id;
       announcement = `Created TK-${item.id}`;
       if (edit) {
@@ -540,6 +551,8 @@
     filterChanged();
   }
   function filterChanged() {
+    clearTimeout(searchTimer);
+    data.filters.query = query.trim();
     if (
       quick.status &&
       quick.title.trim() &&
@@ -549,6 +562,22 @@
       data.filters.status = quick.status;
     updateURL(true);
     void data.reset();
+  }
+  let searchTimer: ReturnType<typeof setTimeout>;
+  onDestroy(() => clearTimeout(searchTimer));
+  function queryChanged() {
+    updateURL();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(filterChanged, 200);
+  }
+  async function focusSearchResult() {
+    const searched = query;
+    clearTimeout(searchTimer);
+    data.filters.query = query.trim();
+    await data.reset();
+    await tick();
+    if (query === searched && document.activeElement?.matches('.search-field input'))
+      board.focusColumn(boardItems[0]?.status || activeColumn, 0);
   }
   function keyboard(event: KeyboardEvent) {
     if (!user || expired || event.isComposing || event.defaultPrevented) return;
@@ -588,7 +617,7 @@
     }
     if (target.matches('.search-field input') && ['Enter', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
-      board.focusColumn(boardItems[0]?.status || activeColumn, 0);
+      void focusSearchResult();
       return;
     }
     if (editing || event.ctrlKey || event.metaKey) return;
@@ -604,8 +633,9 @@
       void requestDelete(target.closest('.detail') ? ticket.item : selected);
       return;
     }
-    if (!event.altKey && ['/', 'n', '?', 'r', 'v'].includes(key)) {
+    if (!event.altKey && ['/', ':', 'n', '?', 'r', 'v'].includes(key)) {
       event.preventDefault();
+      if (key === ':') showPalette();
       if (key === 'v' && !event.repeat) void setLayout(layout === 'list' ? 'board' : 'list');
       if (key === '/') void toolbar.focusSearch(true);
       if (key === 'n' && !event.repeat) void create();
@@ -665,6 +695,7 @@
     else data.start();
   }
   async function restoreURL() {
+    clearTimeout(searchTimer);
     if (!(await guardDraft())) {
       updateURL();
       return;
@@ -675,6 +706,7 @@
       status: statuses.find((status) => status === url.searchParams.get('status')) || '',
       tag: url.searchParams.get('tag') || '',
       assignee: url.searchParams.get('assignee') || '',
+      query: query.trim(),
     };
     const id = url.searchParams.get('item') || '';
     const requested = url.searchParams.get('view');
@@ -717,7 +749,7 @@
     bind:query
     accountOpen={modal === 'account'}
     onfilters={filterChanged}
-    onquery={() => updateURL()}
+    onquery={queryChanged}
     onclear={clearFilters}
     onpeople={() => showDialog('people')}
     oninstall={() => showDialog('setup')}
@@ -805,7 +837,8 @@
             onmissing={() => (ticket.deleted = true)}
             ondelete={() => requestDelete(ticket.item)}
             canPrevious={openedIndex > 0}
-            canNext={openedIndex >= 0 && openedIndex < boardItems.length - 1}
+            canNext={openedIndex >= 0 &&
+              (openedIndex < boardItems.length - 1 || Boolean(data.cursors[ticket.item.status]))}
             onnavigate={adjacentItem}
             onclose={closeDetails}
             onpersist={(id, version, patch) => data.update(id, version, patch)}

@@ -46,7 +46,7 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	if err != nil {
 		return out, err
 	}
-	// ponytail: title-only substring match with ASCII case folding; FTS5 if descriptions or ranking are needed.
+	// ponytail: substring search with ASCII case folding; FTS5 if descriptions or ranking are needed.
 	words := strings.Fields(strings.ToLower(f.Query))
 	if len(words) > 10 || len(f.Query) > 300 || !utf8.ValidString(f.Query) || strings.ContainsFunc(f.Query, unicode.IsControl) {
 		return out, invalid("query must be at most 300 characters and 10 words without control characters")
@@ -95,8 +95,9 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		args = append(args, tag)
 	}
 	for _, word := range words {
-		where = append(where, "instr(lower(i.title),?)>0")
-		args = append(args, word)
+		where = append(where, `(instr(lower(i.title),?)>0 OR CAST(i.id AS TEXT)=? OR EXISTS(
+			SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND instr(t.name,?)>0))`)
+		args = append(args, word, strings.TrimPrefix(strings.TrimPrefix(word, "#"), "tk-"), word)
 	}
 	if f.Cursor != "" {
 		where = append(where, "(i.priority,i.id)>(?,?)")

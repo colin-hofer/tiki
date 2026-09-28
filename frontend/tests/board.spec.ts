@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import type { Item, Status, Updates } from '../src/api';
 import { itemFields, itemPatch, rebaseFields } from '../src/item-edit';
-import { applyItemChanges, reconcileItems } from '../src/items';
+import { applyItemChanges, matchesQuery, reconcileItems } from '../src/items';
 
 const user = { id: '1', name: 'Alex Morgan', role: 'member' };
 const statuses: Status[] = [
@@ -167,6 +167,7 @@ async function mock(
       const matching = state.items
         .filter(
           (i) =>
+            matchesQuery(i, url.searchParams.get('query') || '') &&
             (!status || i.status === status) &&
             (!url.searchParams.get('tag') || i.tags.includes(url.searchParams.get('tag')!)) &&
             (!url.searchParams.get('assignee') ||
@@ -416,7 +417,7 @@ test('expired pagination resets the loaded pages and retries through the sync qu
   await expect(page.getByText('Order changed; loaded pages reset.', { exact: true })).toBeVisible();
   await expect(page.locator('.connection')).toHaveText('Live');
   await expect(page.locator('[data-column="backlog"] .card')).toHaveCount(20);
-  await expect(page.getByRole('button', { name: 'Load more', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Retry loading more', exact: true })).toBeEnabled();
 });
 
 test('switching tickets cancels the previous detail request', async ({ page, context }) => {
@@ -656,6 +657,255 @@ test('one board request loads every status with bounded history and explicit pag
   await expect(
     page.getByRole('region', { name: 'Backlog column', exact: true }).locator('.card'),
   ).toHaveCount(55);
+});
+
+for (const view of ['board', 'list']) {
+  test(`${view}: scrolling appends only the next page and preserves existing tickets`, async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 1512, height: 600 });
+    const state = await mock(
+      context,
+      Array.from({ length: 245 }, (_, i) => makeItem(i + 1, 'backlog', `Backlog ${i + 1}`)),
+    );
+    await signIn(page);
+    await page.locator('#ticket-1').focus();
+    if (view === 'list') await page.keyboard.press('v');
+    const column = page.locator('[data-column="backlog"]');
+    const tickets = column.locator('[data-ticket]');
+    await expect(tickets).toHaveCount(20);
+    const first = await page.locator('#ticket-1').elementHandle();
+    const reads: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && request.url().includes('/api/v1/items?'))
+        reads.push(request.url());
+    });
+    await column.locator('.load-more').scrollIntoViewIfNeeded();
+    await expect(tickets).toHaveCount(120);
+    expect(reads).toHaveLength(1);
+    expect(new URL(reads[0]).searchParams.get('cursor')).toBe('20');
+    expect(await first!.evaluate((node) => node === document.getElementById('ticket-1'))).toBe(
+      true,
+    );
+    await column.locator('.load-more').scrollIntoViewIfNeeded();
+    await expect(tickets).toHaveCount(220);
+    expect(reads).toHaveLength(2);
+    expect(new URL(reads[1]).searchParams.get('cursor')).toBe('120');
+    await column.locator('.load-more').scrollIntoViewIfNeeded();
+    await expect(tickets).toHaveCount(245);
+    await expect(column.locator('.load-more')).toHaveCount(0);
+    expect(state.boardCalls).toBe(1);
+  });
+
+  test(`${view}: keyboard waits for the next page without skipping tickets`, async ({
+    page,
+    context,
+  }) => {
+    // Exercise keyboard paging independently of scroll prefetching.
+    await context.addInitScript(() => {
+      window.IntersectionObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof IntersectionObserver;
+    });
+    await mock(
+      context,
+      Array.from({ length: 130 }, (_, i) => makeItem(i + 1, 'backlog')),
+    );
+    await signIn(page);
+    if (view === 'list') await page.keyboard.press('v');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reads = 0;
+    await page.route('**/api/v1/items?*', async (route) => {
+      reads++;
+      await held;
+      await route.fallback();
+    });
+    await page.locator('#ticket-20').focus();
+    await page.keyboard.press('j');
+    await expect(page.locator('[data-column="backlog"] .load-more')).toHaveText('Loading…');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#ticket-20')).toBeFocused();
+    release();
+    await expect(page.locator('#ticket-21')).toBeFocused();
+    expect(reads).toBe(1);
+    await page.locator('#ticket-120').focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#ticket-121')).toBeFocused();
+    expect(reads).toBe(2);
+  });
+}
+
+test('new tickets stay visible beyond a full page through live refreshes and remote deletion', async ({
+  page,
+  context,
+}) => {
+  const state = await mock(
+    context,
+    Array.from({ length: 130 }, (_, i) => makeItem(i + 1, 'backlog')),
+  );
+  await signIn(page);
+  await page.locator('#ticket-1').focus();
+  await page.keyboard.press('n');
+  await page.getByLabel('New item title').fill('New ticket stays visible');
+  await page.getByLabel('New item title').press('Enter');
+  const created = state.items.find((item) => item.title === 'New ticket stays visible')!;
+  await expect(page.locator(`#ticket-${created.id}`)).toBeInViewport();
+  expect(created.priority).toBeGreaterThan(state.items[129].priority);
+  expect(state.listCalls).toBe(0);
+  await state.notify();
+  await expect.poll(() => state.boardCalls).toBe(2);
+  await expect(page.locator(`#ticket-${created.id}`)).toBeVisible();
+  await expect(page.locator('[data-column="backlog"] [data-ticket]')).toHaveCount(21);
+  state.items = state.items.filter((item) => item.id !== created.id);
+  await state.notify();
+  await expect(page.locator(`#ticket-${created.id}`)).toHaveCount(0);
+});
+
+test('server search finds unloaded titles, IDs and tags, and ignores an outdated response', async ({
+  page,
+  context,
+}) => {
+  const rows = Array.from({ length: 130 }, (_, i) =>
+    makeItem(i + 1, 'backlog', `Ordinary ${i + 1}`),
+  );
+  rows[129].title = 'Buried needle';
+  rows[129].tags = ['rare-tag'];
+  await mock(context, rows);
+  await signIn(page);
+  const search = page.getByLabel('Search tickets');
+  for (const query of ['needle', 'TK-130', '#130', 'rare-tag']) {
+    await search.fill(query);
+    await expect(page.locator('[data-ticket]')).toHaveCount(1);
+    await expect(page.locator('#ticket-130')).toBeVisible();
+  }
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let requested = '';
+  let finished = false;
+  await page.route('**/api/v1/board?*', async (route) => {
+    requested = new URL(route.request().url()).searchParams.get('query') || '';
+    if (requested === 'ordinary') {
+      await held;
+      await route.fallback();
+      finished = true;
+      return;
+    }
+    await route.fallback();
+  });
+  await search.fill('ordinary');
+  await expect.poll(() => requested).toBe('ordinary');
+  await search.fill('needle');
+  await expect.poll(() => page.url()).toContain('q=needle');
+  // Wait for the new query's request, not merely the still-visible old results.
+  await expect.poll(() => requested).toBe('needle');
+  release();
+  await expect.poll(() => finished).toBe(true);
+  await expect(page.locator('#ticket-130')).toBeVisible();
+  await search.fill('ordinary');
+  await expect(page.locator('[data-ticket]')).toHaveCount(20);
+  await page.locator('[data-column="backlog"] .load-more').scrollIntoViewIfNeeded();
+  await expect(page.locator('[data-ticket]')).toHaveCount(120);
+  await expect(page.locator('#ticket-130')).toHaveCount(0);
+});
+
+test('failed page loads keep existing tickets and can be retried', async ({ page, context }) => {
+  await mock(
+    context,
+    Array.from({ length: 55 }, (_, i) => makeItem(i + 1, 'backlog')),
+  );
+  await signIn(page);
+  let reads = 0;
+  await page.route('**/api/v1/items?*', async (route) => {
+    if (++reads === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'unavailable', message: 'Page unavailable' } }),
+      });
+    await route.fallback();
+  });
+  await page.locator('.load-more').scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: 'Retry loading more' })).toBeEnabled();
+  await expect(page.locator('[data-ticket]')).toHaveCount(20);
+  expect(reads).toBe(1);
+  await page.getByRole('button', { name: 'Retry loading more' }).click();
+  await expect(page.locator('[data-ticket]')).toHaveCount(55);
+  expect(reads).toBe(2);
+});
+
+test('paging a recently created ticket preserves edits acknowledged during the read', async ({
+  page,
+  context,
+}) => {
+  const state = await mock(
+    context,
+    Array.from({ length: 55 }, (_, i) => makeItem(i + 1, 'backlog')),
+  );
+  await signIn(page);
+  await page.locator('#ticket-1').focus();
+  await page.keyboard.press('n');
+  await page.getByLabel('New item title').fill('Recent original');
+  await page.getByLabel('New item title').press('Enter');
+  const created = state.items.at(-1)!;
+  await expect(page.locator(`#ticket-${created.id}`)).toBeVisible();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const stale = state.items.slice(20).map((item) => ({ ...item }));
+  await page.route('**/api/v1/items?*', async (route) => {
+    await held;
+    await route.fulfill({ json: { items: stale } });
+  });
+  await page.locator('.load-more').scrollIntoViewIfNeeded();
+  await expect(page.locator('.load-more')).toHaveText('Loading…');
+  // A local save aborts the in-flight page, then a fresh snapshot contains the
+  // old version. The acknowledgement must remain the authoritative value.
+  await page.locator(`#ticket-${created.id}`).click();
+  await page.getByLabel('Ticket title', { exact: true }).fill('Recent saved edit');
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
+  await page.getByRole('combobox', { name: 'Add tag', exact: true }).fill('page-tag');
+  await page.getByRole('combobox', { name: 'Add tag', exact: true }).press('Enter');
+  await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
+  await page.getByRole('combobox', { name: 'Filter tag', exact: true }).click();
+  await expect(page.getByRole('option', { name: 'page-tag', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  release();
+  await page.getByRole('button', { name: 'Close details', exact: true }).click();
+  await page.locator('.load-more').scrollIntoViewIfNeeded();
+  await expect(page.locator('[data-column="backlog"] [data-ticket]')).toHaveCount(56);
+  await expect(page.locator(`#ticket-${created.id}`)).toContainText('Recent saved edit');
+});
+
+test('mobile paging only loads a column when its footer is on screen', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await mock(context, [
+    ...Array.from({ length: 25 }, (_, i) => makeItem(i + 1, 'backlog')),
+    ...Array.from({ length: 25 }, (_, i) => makeItem(i + 26, 'complete')),
+  ]);
+  await signIn(page);
+  await expect(page.locator('.status-tabs [data-status="todo"]')).toHaveAttribute(
+    'aria-current',
+    'true',
+  );
+  const column = page.locator('[data-column="backlog"]');
+  await column.locator('.column-scroll').evaluate((node) => (node.scrollTop = node.scrollHeight));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  expect(state.listCalls).toBe(0);
+  await page.locator('.status-tabs [data-status="backlog"]').click();
+  await expect(column.locator('[data-ticket]')).toHaveCount(25);
+  await expect(page.locator('[data-column="complete"] [data-ticket]')).toHaveCount(20);
+  expect(state.listCalls).toBe(1);
 });
 
 test('failed saves keep draft and viewer controls cannot mutate', async ({ page, context }) => {
@@ -920,11 +1170,11 @@ test('arrows and vim motions keep row position through empty columns and never a
   await page.keyboard.press('g');
   await expect(page.locator('#ticket-3')).toBeFocused();
   await page.keyboard.press('/');
-  await page.getByLabel('Search loaded items').fill(state.items[3].title);
+  await page.getByLabel('Search tickets').fill(state.items[3].title);
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('#ticket-4')).toBeFocused();
   await page.keyboard.press('/');
-  await page.getByLabel('Search loaded items').fill('no results');
+  await page.getByLabel('Search tickets').fill('no results');
   await page.keyboard.press('Escape');
   await expect(page.locator('#column-in_progress')).toBeFocused();
   await page.keyboard.press('a');
@@ -1095,6 +1345,26 @@ test('keyboard and drag reordering work within and across columns, including fil
   await expect(page.locator('.board :focus')).toHaveCount(1);
 });
 
+test('colon opens the command palette like vim, but types normally in fields', async ({
+  page,
+  context,
+}) => {
+  await mock(context);
+  await signIn(page);
+  await page.locator('#ticket-2').focus();
+  await page.keyboard.press(':');
+  const search = page.getByRole('combobox', { name: 'Find a command' });
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await page.keyboard.press('Escape');
+  await expect(search).toHaveCount(0);
+  await expect(page.locator('#ticket-2')).toBeFocused();
+  await page.keyboard.press('/');
+  await page.keyboard.type('a:b');
+  await expect(page.getByLabel('Search tickets')).toHaveValue('a:b');
+  await expect(search).toHaveCount(0);
+});
+
 test('command menus support vim control keys, escape button, and focus handoff to search', async ({
   page,
   context,
@@ -1109,9 +1379,9 @@ test('command menus support vim control keys, escape button, and focus handoff t
   await expect(search).toHaveAttribute('aria-activedescendant', 'command-1');
   await page.keyboard.press('Control+k');
   await expect(search).toHaveAttribute('aria-activedescendant', 'command-0');
-  await search.fill('Search loaded');
+  await search.fill('Search tickets');
   await page.keyboard.press('Enter');
-  await expect(page.getByLabel('Search loaded items')).toBeFocused();
+  await expect(page.getByLabel('Search tickets')).toBeFocused();
   await page.keyboard.press('Escape');
   await page.keyboard.press('Control+k');
   await search.fill('unmatched command');
