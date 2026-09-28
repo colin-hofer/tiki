@@ -17,10 +17,16 @@ test('real Go API: sign in, autosave, atomic move, live update, and reload', asy
   await expect(page.locator('.connection')).toHaveText('Live');
   const anchorResponse = await request.post('/api/v1/items', {
     headers,
-    data: { title: 'Move anchor', status: 'in_progress', type: 'task' },
+    data: {
+      title: 'Move anchor',
+      status: 'in_progress',
+      type: 'task',
+      url: 'https://example.com/doc',
+    },
   });
   expect(anchorResponse.ok()).toBeTruthy();
   const anchor: Item = await anchorResponse.json();
+  expect(anchor.url).toBe('https://example.com/doc');
   await expect(page.locator(`#ticket-${anchor.id}`)).toBeVisible();
 
   await page.getByRole('button', { name: 'Add item to Todo', exact: true }).click();
@@ -31,11 +37,15 @@ test('real Go API: sign in, autosave, atomic move, live update, and reload', asy
   );
   await page.getByRole('button', { name: 'Add & edit', exact: true }).click();
   const item: Item = await (await create).json();
+  const link = 'https://github.com/colin-hofer/tiki/pull/3';
+  await page.getByLabel('Link', { exact: true }).fill(link);
   await page.getByLabel('Ticket title', { exact: true }).fill('Saved through the browser');
   await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close details', exact: true }).click();
   const before: Item = await (await request.get(`/api/v1/items/${item.id}`, { headers })).json();
   expect(before.title).toBe('Saved through the browser');
+  expect(before.url).toBe(link);
+  await expect(page.locator(`#ticket-${item.id} .card-link`)).toHaveAttribute('title', link);
   const mutations: string[] = [];
   page.on('request', (outgoing) => {
     if (outgoing.method() !== 'GET')
@@ -62,5 +72,16 @@ test('real Go API: sign in, autosave, atomic move, live update, and reload', asy
   await expect(page.locator(`#ticket-${item.id}`)).toContainText('Updated by another client');
   await page.reload();
   await expect(page.locator(`#ticket-${item.id}`)).toContainText('Updated by another client');
+  await page.locator(`#ticket-${item.id}`).click();
+  await expect(page.getByLabel('Link', { exact: true })).toHaveValue(link);
+  await expect(page.getByRole('link', { name: 'colin-hofer/tiki#3' })).toHaveAttribute(
+    'href',
+    link,
+  );
+  await page.getByLabel('Link', { exact: true }).fill('');
+  await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
+  const cleared: Item = await (await request.get(`/api/v1/items/${item.id}`, { headers })).json();
+  expect(cleared.url).toBeUndefined();
+  await expect(page.locator(`#ticket-${item.id} .card-link`)).toHaveCount(0);
   expect(errors).toEqual([]);
 });

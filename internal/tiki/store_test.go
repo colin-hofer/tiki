@@ -38,6 +38,31 @@ func addItem(t *testing.T, s *Store, actor ID, title string) Item {
 	return i
 }
 
+func TestItemLink(t *testing.T) {
+	s, admin := fixture(t)
+	i := addItem(t, s, admin.ID, "Linked")
+	link := " https://github.com/accurise/tiki/pull/42 "
+	i, err := s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &link})
+	if err != nil || i.URL != "https://github.com/accurise/tiki/pull/42" {
+		t.Fatalf("link not stored trimmed: %q, %v", i.URL, err)
+	}
+	page, err := s.List(t.Context(), Filter{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].URL != i.URL {
+		t.Fatalf("link missing from list: %+v, %v", page, err)
+	}
+	for _, bad := range []string{"ftp://x", "github.com/pull/1", "javascript:alert(1)", "https://x/a\tb", "https://" + strings.Repeat("a", 2048)} {
+		_, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &bad})
+		requireCode(t, err, "validation")
+	}
+	empty := ""
+	if i, err = s.Update(t.Context(), admin.ID, i.ID, UpdateItem{Version: i.Version, URL: &empty}); err != nil || i.URL != "" {
+		t.Fatalf("link not cleared: %q, %v", i.URL, err)
+	}
+	if _, err = s.Create(t.Context(), admin.ID, CreateItem{Title: "Bad", URL: "nope"}); err == nil {
+		t.Fatal("create accepted an invalid link")
+	}
+}
+
 func requireCode(t *testing.T, err error, code string) {
 	t.Helper()
 	var api *Error

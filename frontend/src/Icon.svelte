@@ -39,6 +39,7 @@
     Trash2,
     KeyRound,
     Copy,
+    Link,
     SquareKanban,
     List,
   } from '@lucide/svelte';
@@ -62,6 +63,7 @@
     up: ArrowUp,
     'arrow-down': ArrowDown,
     tag: Tag,
+    link: Link,
     person: User,
     info: Info,
     check: Check,

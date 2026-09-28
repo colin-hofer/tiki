@@ -41,7 +41,7 @@ func legacyDatabase(t *testing.T, version int) (string, *sql.DB) {
 func TestMigrationsPreserveData(t *testing.T) {
 	passwordHash := hashPassword(testPassword)
 	token := randomToken()
-	for _, version := range []int{2, 3, 4} {
+	for _, version := range []int{2, 3, 4, 5} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path, db := legacyDatabase(t, version)
 			if _, err := db.Exec("INSERT INTO users(id,name,email,password_hash,role) VALUES(7,'Admin','admin@example.test',?,'admin')", passwordHash); err != nil {

@@ -1,13 +1,22 @@
 import type { Item, ItemPatch } from './api';
 
-export type EditorField = 'title' | 'description' | 'status' | 'assignee' | 'tags' | 'type';
+export type EditorField =
+  | 'title'
+  | 'description'
+  | 'link'
+  | 'status'
+  | 'assignee'
+  | 'tags'
+  | 'type';
 export type ItemFields = Pick<Item, 'title' | 'status' | 'type' | 'tags' | 'assignees'> & {
   description: string;
+  url: string;
 };
 export function itemFields(item: Item): ItemFields {
   return {
     title: item.title,
     description: item.description || '',
+    url: item.url || '',
     status: item.status,
     type: item.type,
     tags: [...item.tags],
@@ -19,6 +28,7 @@ export function itemPatch(base: Item | ItemFields, draft: ItemFields): ItemPatch
   const patch: ItemPatch = {};
   if (draft.title !== base.title) patch.title = draft.title;
   if (draft.description !== (base.description || '')) patch.description = draft.description;
+  if (draft.url !== (base.url || '')) patch.url = draft.url;
   if (draft.status !== base.status) patch.status = draft.status;
   if (draft.type !== base.type) patch.type = draft.type;
   for (const [field, add, remove] of [

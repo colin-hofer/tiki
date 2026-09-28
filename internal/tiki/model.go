@@ -96,6 +96,7 @@ type Item struct {
 	Priority    float64  `json:"priority"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
+	URL         string   `json:"url,omitempty"`
 	Preview     string   `json:"preview,omitempty"`
 	CreatedBy   ID       `json:"created_by"`
 	CreatedAt   string   `json:"created_at"`
@@ -108,6 +109,7 @@ type Item struct {
 type CreateItem struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
+	URL         string   `json:"url,omitempty"`
 	Type        Type     `json:"type"`
 	Status      Status   `json:"status"`
 	Priority    *float64 `json:"priority,omitempty"`
@@ -119,6 +121,7 @@ type UpdateItem struct {
 	Version         int64    `json:"version"`
 	Title           *string  `json:"title,omitempty"`
 	Description     *string  `json:"description,omitempty"`
+	URL             *string  `json:"url,omitempty"`
 	Type            *Type    `json:"type,omitempty"`
 	Status          *Status  `json:"status,omitempty"`
 	Priority        *float64 `json:"priority,omitempty"`

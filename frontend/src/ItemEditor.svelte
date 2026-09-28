@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack, onDestroy } from 'svelte';
-  import { APIError, statuses, label, initials, avatarHue } from './api';
+  import { APIError, statuses, label, linkLabel, initials, avatarHue } from './api';
   import type { Item, ItemPatch, User } from './api';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
@@ -174,6 +174,7 @@
     const labels: Record<EditorField, string> = {
       title: 'Ticket title',
       description: 'Description',
+      link: 'Link',
       status: 'Ticket status',
       type: 'Ticket type',
       assignee: 'Add assignee',
@@ -476,6 +477,34 @@
               <datalist id="known-tags"
                 >{#each tags as tag}<option value={tag}></option>{/each}</datalist
               >{:else if !draft.tags.length}<span class="muted">No tags</span>{/if}
+          </div>
+        </div>
+        <div class="property">
+          <span>Link</span>
+          <div class="property-values">
+            {#if draft.url}<a
+                class="link-chip"
+                href={draft.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={draft.url}><Icon name="link" size={12} />{linkLabel(draft.url)}</a
+              >{/if}
+            {#if canWrite}<input
+                class="link-entry"
+                type="url"
+                aria-label="Link"
+                placeholder="https://… (pull request, doc)"
+                maxlength="2048"
+                spellcheck="false"
+                bind:value={draft.url}
+                onblur={() => void save()}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter' && !event.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+              />{:else if !draft.url}<span class="muted">No link</span>{/if}
           </div>
         </div>
       </div>

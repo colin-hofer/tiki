@@ -618,7 +618,10 @@
                 <div class="card-meta">
                   <span class={`item-type ${item.type}`} title={label(item.type)}
                     ><Icon name={item.type} size={12} /></span
-                  ><span class="item-id">#{item.id}</span><span class="card-tags"
+                  ><span class="item-id">#{item.id}</span>{#if item.url}<span
+                      class="card-link"
+                      title={item.url}><Icon name="link" size={12} /></span
+                    >{/if}<span class="card-tags"
                     >{#each item.tags.slice(0, 2) as tag}<span>{tag}</span
                       >{/each}{#if item.tags.length > 2}<span>+{item.tags.length - 2}</span
                       >{/if}</span
