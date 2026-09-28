@@ -2355,14 +2355,15 @@ test('a delayed refresh cannot replace an acknowledged autosave', async ({ page,
       }),
     });
   });
-  await page.getByRole('button', { name: 'Refresh board', exact: true }).click();
+  await page.keyboard.press('r');
   await started;
   await page.getByLabel('Ticket title', { exact: true }).fill('Saved while refresh was pending');
   await expect(page.locator('.detail')).toHaveAttribute('data-save-state', 'saved');
   await expect(page.locator('#ticket-2')).toContainText('Saved while refresh was pending');
   expect(state.items.find((i) => i.id === '2')?.version).toBe(2);
+  const refreshed = page.waitForResponse('**/api/v1/board?*');
   release();
-  await expect(page.getByRole('button', { name: 'Refresh board', exact: true })).toBeEnabled();
+  await refreshed;
   await expect(page.locator('#ticket-2')).toContainText('Saved while refresh was pending');
 });
 

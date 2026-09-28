@@ -71,7 +71,7 @@ test('real Go API: search and paging reach every backlog ticket, including a new
   expect(created.priority).toBeGreaterThan(last.priority);
   await expect(page.locator(`#ticket-${created.id}`)).toBeInViewport();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Refresh board', exact: true }).click();
+  await page.keyboard.press('r');
   await expect(column.locator('[data-ticket]')).toHaveCount(21);
   await column.locator('.load-more').scrollIntoViewIfNeeded();
   await expect(column.locator('[data-ticket]')).toHaveCount(26);

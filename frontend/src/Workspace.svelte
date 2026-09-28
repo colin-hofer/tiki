@@ -754,7 +754,6 @@
     onpeople={() => showDialog('people')}
     oninstall={() => showDialog('setup')}
     oncommands={() => showPalette()}
-    onhelp={showHelp}
     onaccount={() => showAccount()}
     ontags={showTags}
   />

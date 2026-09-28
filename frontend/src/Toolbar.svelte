@@ -20,7 +20,6 @@
     onpeople,
     oninstall,
     oncommands,
-    onhelp,
     onaccount,
     ontags,
   }: {
@@ -38,7 +37,6 @@
     onpeople: () => void;
     oninstall: () => void;
     oncommands: () => void;
-    onhelp: () => void;
     onaccount: () => void;
     ontags: () => void;
   } = $props();
@@ -86,6 +84,16 @@
       onmousedown={(event) => event.preventDefault()}
       onclick={closeSearch}><Icon name="close" size={16} /></button
     >
+  </div>
+  <div class="view-switch" role="group" aria-label="Layout">
+    {#each [{ id: 'board', label: 'Board view' }, { id: 'list', label: 'List view' }] as const as option}<button
+        class="icon-button"
+        class:active={view === option.id}
+        aria-label={option.label}
+        aria-pressed={view === option.id}
+        title={`${option.label} (V)`}
+        onclick={() => onview(option.id)}><Icon name={option.id} size={16} /></button
+      >{/each}
   </div>
   <div class="filters" class:open={filtersOpen} inert={mobile && !filtersOpen}>
     <div class="sheet-header mobile-only">
@@ -158,22 +166,13 @@
       >{/if}
   </div>
   <span class="toolbar-spacer"></span>
-  <div class="view-switch" role="group" aria-label="Layout">
-    {#each [{ id: 'board', label: 'Board view' }, { id: 'list', label: 'List view' }] as const as option}<button
-        class="icon-button"
-        class:active={view === option.id}
-        aria-label={option.label}
-        aria-pressed={view === option.id}
-        title={`${option.label} (V)`}
-        onclick={() => onview(option.id)}><Icon name={option.id} size={16} /></button
-      >{/each}
-  </div>
   {#if data.orderChanged}<button class="text-button order-notice" onclick={() => data.applyOrder()}
       >Apply order</button
     >{/if}
   <span
     class={`connection ${data.connection}`}
-    title={`Updates arrive live. ${data.lastSync ? `Last sync ${data.lastSync}.` : ''}`}
+    role="status"
+    title={`Live updates ${data.connection === 'offline' ? 'are disconnected' : 'are paused'}. ${data.lastSync ? `Last sync ${data.lastSync}.` : ''}`}
     ><span class="tiny-dot"></span><span
       >{data.connection === 'live'
         ? 'Live'
@@ -195,13 +194,6 @@
     ><Icon name="filter" size={18} />{#if activeFilters}<span class="badge">{activeFilters}</span
       >{/if}</button
   >
-  <button
-    class="icon-button desktop-only"
-    aria-label="Refresh board"
-    title="Refresh (R)"
-    disabled={data.busy}
-    onclick={() => data.refresh()}><Icon name="refresh" size={15} /></button
-  >
   {#if user.role === 'admin'}<button
       class="icon-button"
       aria-label="Manage people"
@@ -222,12 +214,6 @@
     ><span class="desktop-only"><Icon name="command" size={15} /></span><span class="mobile-only"
       ><Icon name="more" size={18} /></span
     ></button
-  >
-  <button
-    class="icon-button desktop-only"
-    aria-label="Keyboard shortcuts"
-    title="Keyboard shortcuts (?)"
-    onclick={onhelp}><Icon name="keyboard" size={16} /></button
   >
   <button
     class="icon-button"

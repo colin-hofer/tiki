@@ -307,9 +307,10 @@ kbd {
   width: 6px;
   height: 6px;
 }
-.connection.live .tiny-dot {
-  color: var(--green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent);
+/* Live is the normal state, so the indicator only appears when updates stop arriving. */
+.connection.live,
+.connection.connecting {
+  display: none;
 }
 .connection.offline {
   color: var(--red);
@@ -1337,7 +1338,7 @@ button.danger-text {
   align-items: center;
   gap: 1px;
   padding: 1px;
-  margin-right: 4px;
+  margin-right: 8px;
   border-radius: 7px;
   background: var(--chip);
 }
@@ -1529,9 +1530,6 @@ button.danger-text {
   }
   .toolbar .select-trigger {
     max-width: 120px;
-  }
-  .connection > span:last-child {
-    display: none;
   }
   .column-add {
     opacity: 1;
@@ -1870,15 +1868,17 @@ dialog[open]::backdrop {
     height: 40px;
     border-radius: 10px;
   }
+  /* The view switch sits beside the filters on desktop but joins the right-hand buttons here. */
   .wordmark {
     font-size: 15px;
     margin-right: 0;
+    order: -2;
+  }
+  .toolbar-spacer {
+    order: -1;
   }
   .connection {
     padding: 0 6px;
-  }
-  .connection > span:last-child {
-    display: none;
   }
   .search-field {
     display: none;
