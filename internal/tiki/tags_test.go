@@ -46,7 +46,7 @@ func TestDeleteTagRemovesAllMembershipsWithHistoryAndVersions(t *testing.T) {
 				t.Fatalf("unexpected tag: %s", tag)
 			}
 		}
-		activity, err := s.Activity(ctx, original.ID, 0, 50)
+		activity, err := s.Activity(ctx, original.ID, 0, nil, 50)
 		if err != nil || activity.Activity[len(activity.Activity)-1].Kind != "tag.deleted" {
 			t.Fatalf("deletion missing from history: %+v: %v", activity, err)
 		}

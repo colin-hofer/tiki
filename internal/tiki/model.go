@@ -159,11 +159,13 @@ type Activity struct {
 	Kind      string          `json:"kind"`
 	CreatedAt string          `json:"created_at"`
 	Data      json.RawMessage `json:"data"`
+	ClientID  string          `json:"client_id,omitempty"`
 }
 
 type ActivityPage struct {
-	Activity  []Activity `json:"activity"`
-	NextAfter ID         `json:"next_after,omitempty"`
+	Activity   []Activity `json:"activity"`
+	NextAfter  ID         `json:"next_after,omitempty"`
+	NextBefore ID         `json:"next_before,omitempty"`
 }
 
 type Error struct {

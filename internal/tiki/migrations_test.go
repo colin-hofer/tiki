@@ -41,7 +41,7 @@ func legacyDatabase(t *testing.T, version int) (string, *sql.DB) {
 func TestMigrationsPreserveData(t *testing.T) {
 	passwordHash := hashPassword(testPassword)
 	token := randomToken()
-	for _, version := range []int{2, 3, 4, 5} {
+	for _, version := range []int{2, 3, 4, 5, 6, 7} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path, db := legacyDatabase(t, version)
 			if _, err := db.Exec("INSERT INTO users(id,name,email,password_hash,role) VALUES(7,'Admin','admin@example.test',?,'admin')", passwordHash); err != nil {
@@ -62,6 +62,16 @@ func TestMigrationsPreserveData(t *testing.T) {
 			}
 			if version >= 3 {
 				if _, err := db.Exec(`INSERT INTO invites(hash,role,created_by,created_at,expires_at) VALUES('saved-invite','member',7,1,4102444800)`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if version == 6 {
+				if _, err := db.Exec(`INSERT INTO comments(item_id,author_id,body,created_at,client_id) VALUES(12,7,'Discard local comment','2026-09-24','saved');
+                    INSERT INTO activity(id,item_id,actor_id,kind,created_at,data) VALUES(20,12,7,'comment.created','2026-09-24','{"comment_id":"1"}');`); err != nil {
+					t.Fatal(err)
+				}
+			} else if version >= 7 {
+				if _, err := db.Exec(`INSERT INTO activity(id,item_id,actor_id,kind,created_at,data,client_id) VALUES(20,12,7,'comment.created','2026-09-24','{"body":"Keep comment"}','saved')`); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -88,7 +98,11 @@ func TestMigrationsPreserveData(t *testing.T) {
 					t.Fatalf("lost password: %v", err)
 				}
 				var activities, invites int
-				if err := s.read.QueryRow("SELECT count(*) FROM activity").Scan(&activities); err != nil || activities != 1 {
+				events, err := s.Activity(t.Context(), 12, 0, nil, 50)
+				if err != nil || version >= 7 && (len(events.Activity) != 2 || events.Activity[1].ID != 20 || string(events.Activity[1].Data) != `{"body":"Keep comment"}` || events.Activity[1].ClientID != "saved") {
+					t.Fatalf("lost comments: %+v, %v", events, err)
+				}
+				if err := s.read.QueryRow("SELECT count(*) FROM activity").Scan(&activities); err != nil || (version < 7 && activities != 1) || (version >= 7 && activities != 2) {
 					t.Fatalf("lost activity: %d, %v", activities, err)
 				}
 				if err := s.read.QueryRow("SELECT count(*) FROM invites").Scan(&invites); err != nil || (version >= 3 && invites != 1) {

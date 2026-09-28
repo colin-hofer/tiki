@@ -61,7 +61,7 @@ func (a *app) itemCommand() *cobra.Command {
 	var after string
 	var limit int
 	activity := &cobra.Command{Use: "activity ID", Short: "Read the item's durable change history", Args: cobra.ExactArgs(1)}
-	activity.Flags().StringVar(&after, "after", "", "Continue after activity ID")
+	activity.Flags().StringVar(&after, "after", "0", "Continue after activity ID")
 	activity.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
 	activity.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := tiki.ParseID(args[0])

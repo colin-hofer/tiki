@@ -37,9 +37,10 @@ Browser tests run their own Vite server on port 5174 and a Go API on port 5175. 
 - `Workspace.svelte` coordinates URL state, commands, dialogs, and navigation that must finish pending edits.
 - `board-state.svelte.ts` owns server snapshots, live events, pagination, detail reads, and all ticket writes. Writes invalidate older reads; snapshot reconciliation never replaces a newer item with an older version. Failed writes are not retried automatically.
 - `Board.svelte` owns card focus, keyboard navigation, touch dragging, and board rendering. `Toolbar.svelte` owns search/filter controls.
-- `ItemEditor.svelte` owns the draft and its sequential autosave lifecycle. `item-edit.ts` computes patches and reapplies only edits made after a request or against a conflicted version. `ItemActivity.svelte` owns cancellable activity reads.
+- `timeline.svelte.ts` owns the open ticket timeline, paginated catch-up, optimistic sends, and per-ticket drafts/outbox persisted in tab storage. `ItemTimeline.svelte` interleaves comment bubbles and ticket changes, and preserves reading position. Comment writes are independent of ticket autosave and never advance the ticket version.
+- `ItemEditor.svelte` owns the draft and its sequential autosave lifecycle. `item-edit.ts` computes patches and reapplies only edits made after a request or against a conflicted version.
 
-Keep server synchronization out of view components and DOM operations out of the board state. New ticket mutations must use the board state's write boundary. There is no second cache or compatibility path.
+Keep server synchronization out of view components and DOM operations out of the board state. New ticket mutations must use the board state's write boundary. Comment mutations use the timeline state and retry-safe client IDs. There is no second cache or compatibility path.
 
 ## Interaction
 
@@ -79,9 +80,9 @@ One `/api/v1/board` request loads the initial tickets, users, and tags. Active c
 
 ## Live updates and authentication
 
-The browser keeps one authenticated SSE connection to `/api/v1/events`. Each committed change pushes the current ticket, including its version and description. The UI merges newer versions into existing cards and open details without refetching them, preserves keyboard focus, and keeps unsaved drafts separate. Ordinary saves use the HTTP response the same way; duplicate stream delivery is harmless. Priority changes preserve the visible order until you choose **Apply order**.
+The browser keeps one authenticated SSE connection to `/api/v1/events`. Each committed ticket edit pushes the current ticket, including its version and description. The UI merges newer versions into existing cards and open details without refetching them, preserves keyboard focus, and keeps unsaved drafts separate. Ordinary saves use the HTTP response the same way; duplicate stream delivery is harmless. Priority changes preserve the visible order until you choose **Apply order**.
 
-There is no periodic list polling. Idle connections receive a small heartbeat every 15 seconds. Notifications are coalesced for 100 ms. A membership or priority change inside a partially loaded column refreshes only that column, preserving its cards while the response is pending. Edits beyond its loaded boundary do not trigger a refetch. Initial connections, reconnects, global priority rebalances, and oversized update bursts request a fresh snapshot. If the event stream is unavailable, an initial snapshot still loads and ordinary reads/writes remain available. Reconnects back off and resync; hidden tabs disconnect and resync when shown. Expired/revoked sessions return to sign-in while preserving the draft.
+There is no periodic list polling. Idle connections receive a small heartbeat every 15 seconds. Ticket snapshots are coalesced for 100 ms; all timeline events are applied immediately. Comments and changes share one activity history endpoint and SSE payload, without refetching history for individual edits. A membership or priority change inside a partially loaded column refreshes only that column, preserving its cards while the response is pending. Edits beyond its loaded boundary do not trigger a refetch. Initial connections, reconnects, global priority rebalances, and oversized update bursts request a fresh snapshot. If the event stream is unavailable, an initial snapshot still loads and ordinary reads/writes remain available. Reconnects back off and resync; hidden tabs disconnect and resync when shown. Expired/revoked sessions return to sign-in while preserving the draft.
 
 Authentication currently uses the existing bearer-token API. The session token is kept in tab-scoped `sessionStorage` (memory only if storage is unavailable). No password is persisted. HttpOnly browser cookies and CSRF protection require backend support; the frontend does not invent a separate authentication contract.
 

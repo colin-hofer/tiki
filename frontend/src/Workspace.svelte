@@ -689,7 +689,12 @@
   }}
   onpopstate={restoreURL}
   onbeforeunload={(event) => {
-    if (dirty || quick.title.trim()) event.preventDefault();
+    if (
+      dirty ||
+      quick.title.trim() ||
+      Object.values(ticket.timeline.drafts).some((draft) => draft.text || draft.pending.length)
+    )
+      event.preventDefault();
   }}
 />
 
@@ -783,6 +788,7 @@
           <ItemEditor
             bind:this={editor}
             currentUserId={user.id}
+            timeline={ticket.timeline}
             item={ticket.item}
             users={data.users}
             tags={data.tags}

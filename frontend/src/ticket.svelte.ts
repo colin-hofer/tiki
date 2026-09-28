@@ -1,8 +1,15 @@
 import { api, APIError, message } from './api';
 import type { Item } from './api';
+import { TimelineState } from './timeline.svelte';
 
 // The open ticket has its own request lifetime. Board reloads never replace its draft.
 export class TicketState {
+  timeline: TimelineState;
+  constructor(userId: string) {
+    this.timeline = new TimelineState(userId, (id) => {
+      if (id === this.id) this.deleted = true;
+    });
+  }
   id = $state('');
   item = $state.raw<Item | null>(null);
   deleted = $state(false);
@@ -15,6 +22,7 @@ export class TicketState {
   }
 
   stop() {
+    this.timeline.stop();
     this.request?.abort();
     this.request = null;
   }
@@ -22,6 +30,7 @@ export class TicketState {
   open(id: string) {
     this.stop();
     this.id = id;
+    this.timeline.open(id);
     this.item = null;
     this.deleted = false;
     this.error = '';
@@ -29,7 +38,8 @@ export class TicketState {
   }
 
   async reload(parent?: AbortSignal) {
-    this.stop();
+    this.request?.abort();
+    this.request = null;
     if (!this.id) return;
     const request = (this.request = new AbortController());
     const signal = parent ? AbortSignal.any([request.signal, parent]) : request.signal;

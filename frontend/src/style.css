@@ -840,62 +840,268 @@ kbd {
 .save-state.unsaved {
   color: var(--amber);
 }
-.activity-section {
+.comments-section {
+  position: relative;
   margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
 }
-.activity-toggle {
+.comments-empty {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.comment-log {
+  display: flex;
+  flex-direction: column;
+}
+.chat-day {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0 10px;
+}
+.chat-day:first-child {
+  margin-top: 0;
+}
+.chat-day span {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.comment {
+  --bubble: var(--chip);
+  --bubble-text: var(--text);
+  --r: 16px;
+  --tight: 5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 85%;
+  margin-top: 2px;
+  animation: bubble-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.comment.group-start {
+  margin-top: 10px;
+}
+.comment.own {
+  --bubble: var(--primary);
+  --bubble-text: var(--on-primary);
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+.comment > .mini-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 9px;
+  margin-top: 18px;
+}
+.comment > .mini-avatar.placeholder {
+  visibility: hidden;
+  height: 0;
+}
+.comment-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.comment.own .comment-content {
+  align-items: flex-end;
+}
+.comment-meta {
+  margin: 0 0 3px 10px;
+  font-size: 11px;
+}
+.comment-meta strong {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.comment-bubble {
+  position: relative;
+  max-width: 100%;
+  padding: 7px 12px 7px;
+  background: var(--bubble);
+  color: var(--bubble-text);
+  border-radius: var(--tight) var(--r) var(--r) var(--tight);
+}
+.comment.group-start .comment-bubble {
+  border-top-left-radius: var(--r);
+}
+.comment.group-end .comment-bubble {
+  border-bottom-left-radius: var(--r);
+}
+.comment.own .comment-bubble {
+  border-radius: var(--r) var(--tight) var(--tight) var(--r);
+}
+.comment.own.group-start .comment-bubble {
+  border-top-right-radius: var(--r);
+}
+.comment.own.group-end .comment-bubble {
+  border-bottom-right-radius: var(--r);
+}
+.comment-bubble p {
+  display: inline;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.45;
+}
+/* The timestamp floats into the last line when it fits, like most messengers. */
+.comment-bubble time {
+  float: right;
+  margin: 5px 0 -3px 10px;
+  font-size: 10px;
+  line-height: 1.45;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.comment-pending .comment-bubble {
+  opacity: 0.6;
+}
+.comment-failed .comment-bubble {
+  background: color-mix(in srgb, var(--amber) 18%, var(--chip));
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 45%, transparent);
+}
+.comment-status {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 6px 0 2px;
-  margin-left: -2px;
-  font-size: 12px;
+  gap: 8px;
+  margin: 4px 4px 0;
   color: var(--text-3);
-  border-radius: 6px;
+  font-size: 10px;
 }
-.activity-toggle:hover {
-  color: var(--text);
-  background: var(--hover);
+.comment-status .text-button {
+  font-size: 11px;
 }
-.activity-list {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-  font-size: 12px;
+.comment-error {
+  color: var(--amber);
 }
-.activity-list li {
-  position: relative;
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment {
+    animation: none;
+  }
+}
+.comment-composer {
+  border-top: 1px solid var(--line);
+  padding: 10px 16px max(10px, env(safe-area-inset-bottom));
+}
+.comment-input {
   display: flex;
-  gap: 12px;
-  padding-bottom: 14px;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  border-radius: 20px;
+  background: var(--inset);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: box-shadow 0.15s;
 }
-.activity-list li:not(:last-child)::before {
-  content: '';
-  position: absolute;
-  left: 2.5px;
-  top: 14px;
-  bottom: 0;
-  width: 1px;
-  background: var(--line-strong);
+.comment-input:focus-within {
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
-.activity-list strong {
-  color: var(--text);
+.comment-input textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  max-height: 160px;
+  resize: none;
+  field-sizing: content;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.comment-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  transition:
+    transform 0.12s,
+    opacity 0.12s,
+    background 0.12s;
+}
+.comment-send:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: scale(1.06);
+}
+.comment-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.comment-send:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.comment-hint {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  padding-left: 14px;
+  font-size: 10px;
+  color: var(--text-3);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    height 0.15s,
+    margin 0.15s;
+}
+.comment-composer:focus-within .comment-hint,
+.comment-hint.danger-text {
+  height: 15px;
+  margin-top: 5px;
+  opacity: 1;
+}
+/* Ticket changes share the chat chronology, with quieter treatment than messages. */
+.timeline-event {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.timeline-event strong {
+  color: var(--text-2);
   font-weight: 500;
 }
-.activity-node {
-  width: 6px;
-  height: 6px;
+.timeline-event time {
+  margin-left: 6px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.timeline-node {
+  align-self: flex-start;
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
   margin-top: 6px;
   border-radius: 50%;
   background: var(--text-3);
-  flex-shrink: 0;
-}
-.activity-list time {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-3);
-  font: 11px var(--mono);
 }
 .detail-meta {
   display: flex;
@@ -1571,8 +1777,8 @@ dialog[open]::backdrop {
 .board-alert {
   animation: pop-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.detail-content > .conflict,
-.detail-content > .error-banner {
+.detail-content .conflict,
+.detail-content .error-banner {
   animation: pop-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .property > .select-trigger {
@@ -2532,4 +2738,12 @@ dialog[open]::backdrop {
   box-shadow: none;
   outline: 1px dashed var(--line-strong);
   outline-offset: -1px;
+}
+
+.comment-hint.danger-text {
+  color: var(--red);
+}
+.editor-footer:has(+ .comment-composer) {
+  min-height: 36px;
+  padding: 8px 20px;
 }

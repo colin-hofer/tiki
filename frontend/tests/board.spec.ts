@@ -424,7 +424,7 @@ test('switching tickets cancels the previous detail request', async ({ page, con
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const { TicketState } = await import('../src/ticket.svelte.ts');
-    const ticket = new TicketState();
+    const ticket = new TicketState('1');
     const first = ticket.open('1');
     const second = ticket.open('2');
     await Promise.all([first, second]);
@@ -547,15 +547,20 @@ test('live role changes update permissions without losing an open draft', async 
   const state = await mock(context);
   await signIn(page);
   await page.locator('#ticket-2').click();
+  await page.getByLabel('Comment', { exact: true }).fill('Keep my comment draft');
   await page.getByLabel('Ticket title', { exact: true }).fill('Keep my draft');
   state.viewer = true;
   await state.notify('change', { users: true });
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveValue('Keep my comment draft');
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveJSProperty('readOnly', true);
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0);
   state.viewer = false;
   await state.notify('change', { users: true });
   await expect(page.getByLabel('Ticket title', { exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveJSProperty('readOnly', false);
   await expect(page.getByLabel('Ticket title', { exact: true })).toHaveValue('Keep my draft');
   await expect(page.getByText('All changes saved', { exact: true })).toBeVisible();
   expect(state.items.find((item) => item.id === '2')?.title).toBe('Keep my draft');
@@ -669,6 +674,7 @@ test('failed saves keep draft and viewer controls cannot mutate', async ({ page,
   await expect(page.locator('.connection')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Ticket title')).toBeDisabled();
+  await expect(page.getByLabel('Comment', { exact: true })).toHaveCount(0);
 });
 
 test('list view keeps every board shortcut, collapses groups, and remembers the layout', async ({
@@ -1193,11 +1199,21 @@ test('mobile details keep Tab in the panel and return to the selected ticket', a
   await page.locator('#ticket-2').click();
   await expect(page.getByLabel('Ticket title')).toBeFocused();
   const panel = page.getByRole('complementary', { name: 'Item 2', exact: true });
-  await panel.getByRole('button', { name: 'Activity', exact: true }).focus();
+  await panel.getByLabel('Description', { exact: true }).focus();
+  await page.keyboard.press('Tab');
+  const composer = panel.getByLabel('Comment', { exact: true });
+  await expect(composer).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(panel.getByRole('button', { name: 'Previous ticket', exact: true })).toBeFocused();
   await page.keyboard.press('Shift+Tab');
-  await expect(panel.getByRole('button', { name: 'Activity', exact: true })).toBeFocused();
+  await expect(composer).toBeFocused();
+  await composer.fill('Keep this mobile draft');
+  await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Previous ticket', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(panel.getByRole('button', { name: 'Send', exact: true })).toBeFocused();
   await page.keyboard.press('F6');
   await expect(panel).toHaveCount(0);
   await expect(page.locator('#ticket-2')).toBeFocused();

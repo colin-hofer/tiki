@@ -14,7 +14,7 @@ func TestMoveStatusIsAtomic(t *testing.T) {
 	if err != nil || moved.Status != status || moved.Priority >= anchor.Priority || moved.Version != item.Version+1 {
 		t.Fatalf("move: %+v, %v", moved, err)
 	}
-	activity, err := s.Activity(t.Context(), item.ID, 0, 50)
+	activity, err := s.Activity(t.Context(), item.ID, 0, nil, 50)
 	if err != nil || len(activity.Activity) != 2 || activity.Activity[1].Kind != "item.moved" {
 		t.Fatalf("one move should create one activity record: %+v, %v", activity, err)
 	}

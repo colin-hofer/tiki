@@ -65,7 +65,7 @@
     <div class="dlg-callout danger">
       <strong class="delete-ticket-title">{item.title}</strong>
       <p id="delete-description">
-        Deletes the ticket and its activity, discarding unsaved edits. Can't be undone.
+        Deletes the ticket, comments, and activity, discarding unsaved edits. Can't be undone.
       </p>
     </div>
     {#if error}<p class="error-banner" role="alert">{error}</p>{/if}

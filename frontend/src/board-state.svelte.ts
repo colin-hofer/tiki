@@ -37,7 +37,7 @@ export class BoardState {
   lastSync = $state('');
   error = $state('');
   notice = $state('');
-  ticket = new TicketState();
+  ticket: TicketState;
   orderChanged = $derived.by(() => {
     const last = new Map<Status, Item>();
     for (const item of this.items) {
@@ -59,7 +59,9 @@ export class BoardState {
   constructor(
     private userId: string,
     private onuser: (user: User) => void,
-  ) {}
+  ) {
+    this.ticket = new TicketState(userId);
+  }
 
   start() {
     this.stop();
@@ -96,6 +98,7 @@ export class BoardState {
   }
 
   refresh() {
+    this.ticket.timeline.open(this.ticket.id);
     this.pending.snapshot = this.pending.order = true;
     this.session?.read?.abort();
     return this.sync();
@@ -118,6 +121,9 @@ export class BoardState {
   }
 
   private receive(updates: Updates) {
+    this.ticket.timeline.accept(updates.activity || []);
+    if (updates.reset) this.ticket.timeline.open(this.ticket.id);
+    if (!updates.reset && !updates.users && !updates.items?.length) return;
     this.pending.snapshot ||= Boolean(updates.reset);
     this.pending.directory ||= Boolean(updates.users);
     if (!this.pending.snapshot) {

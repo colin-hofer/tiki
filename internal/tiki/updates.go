@@ -10,9 +10,10 @@ import (
 // Reset asks for a new snapshot when ordering changed globally or a consumer
 // fell too far behind. No history or database transaction is held by a stream.
 type Updates struct {
-	Items []Item `json:"items,omitempty"`
-	Users bool   `json:"users,omitempty"`
-	Reset bool   `json:"reset,omitempty"`
+	Items    []Item     `json:"items,omitempty"`
+	Activity []Activity `json:"activity,omitempty"`
+	Users    bool       `json:"users,omitempty"`
+	Reset    bool       `json:"reset,omitempty"`
 }
 
 func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, error) {
@@ -29,34 +30,45 @@ func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, er
 		return out, err
 	}
 	defer tx.Rollback()
-	// Bound work independently of history size, and coalesce repeated edits.
-	rows, err := tx.QueryContext(ctx, "SELECT item_id FROM activity WHERE id>? AND id<=? ORDER BY id LIMIT 65", after.Activity, until.Activity)
+	// Preserve all timeline events; only the current ticket snapshots coalesce.
+	rows, err := tx.QueryContext(ctx, "SELECT "+activityColumns+" FROM activity WHERE id>? AND id<=? ORDER BY id LIMIT 65", after.Activity, until.Activity)
 	if err != nil {
 		return out, err
 	}
 	var ids []ID
 	seen := make(map[ID]bool)
-	count := 0
+	bytes := 0
 	for rows.Next() {
-		var id sql.NullInt64
-		if err := rows.Scan(&id); err != nil {
+		event, err := scanActivity(rows)
+		if err != nil {
 			rows.Close()
 			return out, err
 		}
-		count++
-		if !id.Valid || count > 64 {
+		data, err := json.Marshal(event)
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		bytes += len(data)
+		if event.ItemID == nil || len(out.Activity) == 64 || bytes > 2<<20 {
 			out.Reset = true
-		} else if !seen[ID(id.Int64)] {
-			seen[ID(id.Int64)] = true
-			ids = append(ids, ID(id.Int64))
+			break
+		}
+		out.Activity = append(out.Activity, event)
+		id := *event.ItemID
+		if event.Kind != "comment.created" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
 	err = rows.Err()
 	rows.Close()
+	if out.Reset {
+		out.Activity = nil
+	}
 	if err != nil || out.Reset {
 		return out, err
 	}
-	bytes := 0
 	for _, id := range ids {
 		item, err := getItem(ctx, tx, id)
 		if err != nil {
@@ -69,6 +81,7 @@ func (s *Store) Updates(ctx context.Context, after, until Revision) (Updates, er
 		bytes += len(data)
 		if bytes > 2<<20 {
 			out.Items = nil
+			out.Activity = nil
 			out.Reset = true
 			return out, nil
 		}

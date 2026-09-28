@@ -44,14 +44,22 @@ export interface Board {
 }
 export interface Activity {
   id: string;
+  item_id?: string;
+  client_id?: string;
   actor_id: string;
   kind: string;
   created_at: string;
-  data: unknown;
+  data: {
+    body?: string;
+    changes?: ItemPatch;
+    move?: { status?: Status };
+    tag?: string;
+  };
 }
 export interface ActivityPage {
   activity: Activity[];
   next_after?: string;
+  next_before?: string;
 }
 export interface Session {
   user: User;
@@ -60,6 +68,7 @@ export interface Session {
 }
 export interface Updates {
   items?: Item[];
+  activity?: Activity[];
   users?: boolean;
   reset?: boolean;
 }

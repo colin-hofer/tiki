@@ -55,6 +55,9 @@ func TestUpdatesCoalesceAndBoundPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := addItem(t, store, admin.ID, "First")
+	if _, err := store.AddComment(t.Context(), admin.ID, item.ID, CreateComment{Body: "Starting work", ClientID: "first"}); err != nil {
+		t.Fatal(err)
+	}
 	title := "Latest"
 	item, err = store.Update(t.Context(), admin.ID, item.ID, UpdateItem{Version: item.Version, Title: &title})
 	if err != nil {
@@ -67,6 +70,9 @@ func TestUpdatesCoalesceAndBoundPayloads(t *testing.T) {
 	batch, err := store.Updates(t.Context(), before, after)
 	if err != nil || batch.Reset || len(batch.Items) != 1 || batch.Items[0].Version != item.Version || batch.Items[0].Title != title {
 		t.Fatalf("expected one current item: %+v %v", batch, err)
+	}
+	if len(batch.Activity) != 3 || batch.Activity[0].Kind != "item.created" || batch.Activity[1].Kind != "comment.created" || batch.Activity[2].Kind != "item.updated" {
+		t.Fatalf("timeline events were lost or reordered: %+v", batch.Activity)
 	}
 	// Exceed the payload budget with valid large descriptions; send one reset,
 	// rather than allocating or queueing an unbounded history for a slow tab.
@@ -81,7 +87,7 @@ func TestUpdatesCoalesceAndBoundPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	batch, err = store.Updates(t.Context(), before, after)
-	if err != nil || !batch.Reset || len(batch.Items) != 0 {
+	if err != nil || !batch.Reset || len(batch.Items) != 0 || len(batch.Activity) != 0 {
 		t.Fatalf("expected bounded reset: %d items, reset=%v, error=%v", len(batch.Items), batch.Reset, err)
 	}
 	before = after

@@ -4,7 +4,8 @@
   import type { Item, ItemPatch, User } from './api';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
-  import ItemActivity from './ItemActivity.svelte';
+  import ItemTimeline from './ItemTimeline.svelte';
+  import type { TimelineState } from './timeline.svelte';
   import type { EditorField } from './item-edit';
   import { itemFields, itemPatch, rebaseFields } from './item-edit';
 
@@ -27,6 +28,7 @@
     onmissing,
     ondelete,
     currentUserId,
+    timeline,
     suspended = false,
     canPrevious = false,
     canNext = false,
@@ -43,6 +45,7 @@
     onmissing: () => void;
     ondelete: () => void;
     currentUserId: string;
+    timeline: TimelineState;
     suspended?: boolean;
     canPrevious?: boolean;
     canNext?: boolean;
@@ -52,6 +55,9 @@
     onreload: () => Promise<void>;
   } = $props();
   let panel: HTMLElement;
+  let scrollport = $state<HTMLElement>();
+  let conversationView = $state<ItemTimeline>();
+  let unreadEvents = $state(false);
   let base = $state<Item>(untrack(() => item));
   let draft = $state(untrack(() => itemFields(base)));
   let tagInput = $state('');
@@ -67,6 +73,9 @@
   let conflict = $derived(Boolean(!saving && item.version > base.version && dirty));
   let canWrite = $derived(!readonly && !deleted);
   const usersById = $derived(new Map(users.map((user) => [user.id, user])));
+  const commentTooLong = $derived(
+    new TextEncoder().encode(timeline.draft?.text.trim() || '').length > 16 * 1024,
+  );
 
   export function hasUnsavedChanges() {
     return dirty || saving;
@@ -248,7 +257,12 @@
         first?.focus();
       }
     }
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) {
+    if (
+      !(event.target as HTMLElement).closest('.comment-composer') &&
+      (event.ctrlKey || event.metaKey) &&
+      event.key === 'Enter' &&
+      !event.isComposing
+    ) {
       event.preventDefault();
       void flush(true).then((saved) => {
         if (saved && event.shiftKey) onclose();
@@ -291,234 +305,244 @@
       >
     </div>
   </div>
-  <form
-    class="editor-form"
-    onsubmit={(event) => {
-      event.preventDefault();
-      void flush(true);
-    }}
-    oncompositionstart={() => (composing = true)}
-    oncompositionend={() => (composing = false)}
-  >
-    <div class="detail-content">
-      <!-- A wrapping single-line title: Enter saves like a text field, pasted line breaks become spaces. -->
-      <textarea
-        class="title-editor"
-        rows="1"
-        aria-label="Ticket title"
-        placeholder="Title"
-        maxlength="300"
-        required
-        spellcheck="false"
-        bind:value={draft.title}
-        use:autosize={draft.title}
-        onblur={() => void save()}
-        readonly={deleted}
-        disabled={readonly && !deleted}
-        oninput={(event) => {
-          if (/[\r\n]/.test(event.currentTarget.value))
-            draft.title = event.currentTarget.value.replace(/\s*[\r\n]+\s*/g, ' ');
+  <div class="editor-form">
+    <div class="detail-content" bind:this={scrollport}>
+      <form
+        onsubmit={(event) => {
+          event.preventDefault();
+          void flush(true);
         }}
-        onkeydown={(event) => {
-          if (event.key === 'Enter' && !event.isComposing) {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}></textarea>
+        oncompositionstart={() => (composing = true)}
+        oncompositionend={() => (composing = false)}
+      >
+        <!-- A wrapping single-line title: Enter saves like a text field, pasted line breaks become spaces. -->
+        <textarea
+          class="title-editor"
+          rows="1"
+          aria-label="Ticket title"
+          placeholder="Title"
+          maxlength="300"
+          required
+          spellcheck="false"
+          bind:value={draft.title}
+          use:autosize={draft.title}
+          onblur={() => void save()}
+          readonly={deleted}
+          disabled={readonly && !deleted}
+          oninput={(event) => {
+            if (/[\r\n]/.test(event.currentTarget.value))
+              draft.title = event.currentTarget.value.replace(/\s*[\r\n]+\s*/g, ' ');
+          }}
+          onkeydown={(event) => {
+            if (event.key === 'Enter' && !event.isComposing) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}></textarea>
 
-      {#if conflict && !deleted}
-        <div class="conflict" role="status">
-          <strong>Updated by someone else</strong>
-          <p>Your draft is preserved. Review their changes, then choose which version to keep.</p>
-          <details>
-            <summary>Review latest version · v{item.version}</summary>
-            <div class="remote-copy">
-              <strong>{item.title}</strong>
-              <p>{item.description || 'No description'}</p>
-              <small
-                >{label(item.status)} · {label(item.type)}<br />Tags: {item.tags.join(', ') ||
-                  'none'}<br />Assignees: {item.assignees
-                  .map((id) => usersById.get(id)?.name || id)
-                  .join(', ') || 'none'}</small
-              >
-            </div>
-          </details>
-          <div class="button-row">
-            <button type="button" class="small-button" onclick={rebase}
-              >Keep my edits on latest</button
-            ><button type="button" class="text-button" onclick={() => fill(item)}
-              >Discard my draft</button
-            >
-          </div>
-        </div>
-      {/if}
-      {#if deleted}<div class="conflict" role="status">
-          <strong>This ticket was deleted.</strong>
-          <p>
-            {dirty
-              ? 'Your unsaved text is kept here. Copy anything you need before discarding the draft.'
-              : 'You can close this panel.'}
-          </p>
-          {#if dirty}<button
-              type="button"
-              class="small-button"
-              onclick={() => {
-                fill(item);
-                onclose();
-              }}>Discard draft and close</button
-            >{/if}
-        </div>{/if}
-      {#if error && !deleted}<div class="error-banner" role="alert">{error}</div>{/if}
-
-      <div class="properties">
-        <div class="property">
-          <span>Status</span><Select
-            label="Ticket status"
-            variant="property"
-            bind:value={draft.status}
-            disabled={!canWrite}
-            options={statuses.map((value) => ({
-              value,
-              label: label(value),
-              icon: value,
-              iconClass: `status-icon ${value}`,
-            }))}
-          />
-        </div>
-        <div class="property">
-          <span>Type</span><Select
-            label="Ticket type"
-            variant="property"
-            bind:value={draft.type}
-            disabled={!canWrite}
-            options={(['task', 'bug', 'feature'] as const).map((value) => ({
-              value,
-              label: label(value),
-              icon: value,
-              iconClass: `item-type ${value}`,
-            }))}
-          />
-        </div>
-        <div class="property">
-          <span>Assignees</span>
-          <div class="property-values">
-            {#each draft.assignees as id}<span class="person-chip"
-                ><span class="mini-avatar" style:--hue={avatarHue(id)}
-                  >{initials(usersById.get(id)?.name || id)}</span
-                >{usersById.get(id)?.name || `User ${id}`}{#if canWrite}<button
-                    type="button"
-                    aria-label={`Remove assignee ${usersById.get(id)?.name || id}`}
-                    onclick={() => (draft.assignees = draft.assignees.filter((a) => a !== id))}
-                    ><Icon name="close" size={12} /></button
-                  >{/if}</span
-              >{/each}
-            {#if canWrite}<Select
-                label="Add assignee"
-                variant="add"
-                placeholder="Assign"
-                placeholderIcon="add-person"
-                value=""
-                disabled={users.every((u) => u.removed_at || draft.assignees.includes(u.id))}
-                onchange={(id) => {
-                  if (id) draft.assignees = [...draft.assignees, id];
-                }}
-                options={users
-                  .filter((u) => !u.removed_at && !draft.assignees.includes(u.id))
-                  .map((u) => ({
-                    value: u.id,
-                    label: u.name,
-                    avatar: initials(u.name),
-                    avatarHue: avatarHue(u.id),
-                    hint: u.id === currentUserId ? 'me' : undefined,
-                  }))}
-              />{:else if !draft.assignees.length}<span class="muted">Unassigned</span>{/if}
-          </div>
-        </div>
-        <div class="property">
-          <span>Tags</span>
-          <div class="property-values">
-            {#each draft.tags as tag}<span class="tag-chip"
-                >{tag}{#if canWrite}<button
-                    type="button"
-                    aria-label={`Remove tag ${tag}`}
-                    onclick={() => (draft.tags = draft.tags.filter((t) => t !== tag))}
-                    ><Icon name="close" size={12} /></button
-                  >{/if}</span
-              >{/each}
-            {#if canWrite}<div class="tag-entry">
-                <input
-                  aria-label="Add tag"
-                  placeholder="+ Add tag"
-                  list="known-tags"
-                  maxlength="64"
-                  bind:value={tagInput}
-                  onblur={() => {
-                    if (!composing && tagInput.trim()) addTag();
-                  }}
-                  onkeydown={(event) => {
-                    if (
-                      event.key === 'Enter' &&
-                      !event.ctrlKey &&
-                      !event.metaKey &&
-                      !event.isComposing
-                    ) {
-                      event.preventDefault();
-                      addTag();
-                    }
-                  }}
-                /><button
-                  type="button"
-                  class="icon-button"
-                  aria-label="Apply tag"
-                  disabled={!tagInput.trim()}
-                  onclick={addTag}><Icon name="plus" size={13} /></button
+        {#if conflict && !deleted}
+          <div class="conflict" role="status">
+            <strong>Updated by someone else</strong>
+            <p>Your draft is preserved. Review their changes, then choose which version to keep.</p>
+            <details>
+              <summary>Review latest version · v{item.version}</summary>
+              <div class="remote-copy">
+                <strong>{item.title}</strong>
+                <p>{item.description || 'No description'}</p>
+                <small
+                  >{label(item.status)} · {label(item.type)}<br />Tags: {item.tags.join(', ') ||
+                    'none'}<br />Assignees: {item.assignees
+                    .map((id) => usersById.get(id)?.name || id)
+                    .join(', ') || 'none'}</small
                 >
               </div>
-              <datalist id="known-tags"
-                >{#each tags as tag}<option value={tag}></option>{/each}</datalist
-              >{:else if !draft.tags.length}<span class="muted">No tags</span>{/if}
+            </details>
+            <div class="button-row">
+              <button type="button" class="small-button" onclick={rebase}
+                >Keep my edits on latest</button
+              ><button type="button" class="text-button" onclick={() => fill(item)}
+                >Discard my draft</button
+              >
+            </div>
           </div>
-        </div>
-        <div class="property">
-          <span>Link</span>
-          <div class="property-values">
-            {#if draft.url}<a
-                class="link-chip"
-                href={draft.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={draft.url}><Icon name="link" size={12} />{linkLabel(draft.url)}</a
+        {/if}
+        {#if deleted}<div class="conflict" role="status">
+            <strong>This ticket was deleted.</strong>
+            <p>
+              {dirty
+                ? 'Your unsaved text is kept here. Copy anything you need before discarding the draft.'
+                : 'You can close this panel.'}
+            </p>
+            {#if dirty}<button
+                type="button"
+                class="small-button"
+                onclick={() => {
+                  fill(item);
+                  onclose();
+                }}>Discard draft and close</button
               >{/if}
-            {#if canWrite}<input
-                class="link-entry"
-                type="url"
-                aria-label="Link"
-                placeholder="https://… (pull request, doc)"
-                maxlength="2048"
-                spellcheck="false"
-                bind:value={draft.url}
-                onblur={() => void save()}
-                onkeydown={(event) => {
-                  if (event.key === 'Enter' && !event.isComposing) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-              />{:else if !draft.url}<span class="muted">No link</span>{/if}
+          </div>{/if}
+        {#if error && !deleted}<div class="error-banner" role="alert">{error}</div>{/if}
+
+        <div class="properties">
+          <div class="property">
+            <span>Status</span><Select
+              label="Ticket status"
+              variant="property"
+              bind:value={draft.status}
+              disabled={!canWrite}
+              options={statuses.map((value) => ({
+                value,
+                label: label(value),
+                icon: value,
+                iconClass: `status-icon ${value}`,
+              }))}
+            />
+          </div>
+          <div class="property">
+            <span>Type</span><Select
+              label="Ticket type"
+              variant="property"
+              bind:value={draft.type}
+              disabled={!canWrite}
+              options={(['task', 'bug', 'feature'] as const).map((value) => ({
+                value,
+                label: label(value),
+                icon: value,
+                iconClass: `item-type ${value}`,
+              }))}
+            />
+          </div>
+          <div class="property">
+            <span>Assignees</span>
+            <div class="property-values">
+              {#each draft.assignees as id}<span class="person-chip"
+                  ><span class="mini-avatar" style:--hue={avatarHue(id)}
+                    >{initials(usersById.get(id)?.name || id)}</span
+                  >{usersById.get(id)?.name || `User ${id}`}{#if canWrite}<button
+                      type="button"
+                      aria-label={`Remove assignee ${usersById.get(id)?.name || id}`}
+                      onclick={() => (draft.assignees = draft.assignees.filter((a) => a !== id))}
+                      ><Icon name="close" size={12} /></button
+                    >{/if}</span
+                >{/each}
+              {#if canWrite}<Select
+                  label="Add assignee"
+                  variant="add"
+                  placeholder="Assign"
+                  placeholderIcon="add-person"
+                  value=""
+                  disabled={users.every((u) => u.removed_at || draft.assignees.includes(u.id))}
+                  onchange={(id) => {
+                    if (id) draft.assignees = [...draft.assignees, id];
+                  }}
+                  options={users
+                    .filter((u) => !u.removed_at && !draft.assignees.includes(u.id))
+                    .map((u) => ({
+                      value: u.id,
+                      label: u.name,
+                      avatar: initials(u.name),
+                      avatarHue: avatarHue(u.id),
+                      hint: u.id === currentUserId ? 'me' : undefined,
+                    }))}
+                />{:else if !draft.assignees.length}<span class="muted">Unassigned</span>{/if}
+            </div>
+          </div>
+          <div class="property">
+            <span>Tags</span>
+            <div class="property-values">
+              {#each draft.tags as tag}<span class="tag-chip"
+                  >{tag}{#if canWrite}<button
+                      type="button"
+                      aria-label={`Remove tag ${tag}`}
+                      onclick={() => (draft.tags = draft.tags.filter((t) => t !== tag))}
+                      ><Icon name="close" size={12} /></button
+                    >{/if}</span
+                >{/each}
+              {#if canWrite}<div class="tag-entry">
+                  <input
+                    aria-label="Add tag"
+                    placeholder="+ Add tag"
+                    list="known-tags"
+                    maxlength="64"
+                    bind:value={tagInput}
+                    onblur={() => {
+                      if (!composing && tagInput.trim()) addTag();
+                    }}
+                    onkeydown={(event) => {
+                      if (
+                        event.key === 'Enter' &&
+                        !event.ctrlKey &&
+                        !event.metaKey &&
+                        !event.isComposing
+                      ) {
+                        event.preventDefault();
+                        addTag();
+                      }
+                    }}
+                  /><button
+                    type="button"
+                    class="icon-button"
+                    aria-label="Apply tag"
+                    disabled={!tagInput.trim()}
+                    onclick={addTag}><Icon name="plus" size={13} /></button
+                  >
+                </div>
+                <datalist id="known-tags"
+                  >{#each tags as tag}<option value={tag}></option>{/each}</datalist
+                >{:else if !draft.tags.length}<span class="muted">No tags</span>{/if}
+            </div>
+          </div>
+          <div class="property">
+            <span>Link</span>
+            <div class="property-values">
+              {#if draft.url}<a
+                  class="link-chip"
+                  href={draft.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={draft.url}><Icon name="link" size={12} />{linkLabel(draft.url)}</a
+                >{/if}
+              {#if canWrite}<input
+                  class="link-entry"
+                  type="url"
+                  aria-label="Link"
+                  placeholder="https://… (pull request, doc)"
+                  maxlength="2048"
+                  spellcheck="false"
+                  bind:value={draft.url}
+                  onblur={() => void save()}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter' && !event.isComposing) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                />{:else if !draft.url}<span class="muted">No link</span>{/if}
+            </div>
           </div>
         </div>
-      </div>
-      <div class="section-label"><label for="description">Description</label></div>
-      <textarea
-        id="description"
-        class="description-editor"
-        placeholder="Description (Markdown)"
-        bind:value={draft.description}
-        onblur={() => void save()}
-        readonly={deleted}
-        disabled={readonly && !deleted}
-        spellcheck="false"></textarea>
-      <ItemActivity {item} {usersById} {deleted} />
+        <div class="section-label"><label for="description">Description</label></div>
+        <textarea
+          id="description"
+          class="description-editor"
+          placeholder="Description (Markdown)"
+          bind:value={draft.description}
+          onblur={() => void save()}
+          readonly={deleted}
+          disabled={readonly && !deleted}
+          spellcheck="false"></textarea>
+      </form>
+      <ItemTimeline
+        bind:this={conversationView}
+        bind:unread={unreadEvents}
+        conversation={timeline}
+        {usersById}
+        {scrollport}
+        {readonly}
+        {deleted}
+        {suspended}
+      />
       <div class="detail-meta">
         Created {new Date(base.created_at).toLocaleDateString(undefined, {
           month: 'short',
@@ -528,6 +552,11 @@
       </div>
     </div>
     <div class="editor-footer">
+      {#if unreadEvents}<button
+          type="button"
+          class="small-button"
+          onclick={() => conversationView?.bottom()}>New events ↓</button
+        >{/if}
       <span class:unsaved={dirty || saving} class="save-state" role="status" aria-live="polite"
         ><span class="tiny-dot" aria-hidden="true"></span>{deleted
           ? 'Ticket deleted'
@@ -562,5 +591,46 @@
             >{/if}
         </div>{/if}
     </div>
-  </form>
+    {#if canWrite || timeline.draft?.text}
+      <form
+        class="comment-composer"
+        onsubmit={(event) => {
+          event.preventDefault();
+          if (canWrite && !suspended) timeline.send();
+        }}
+      >
+        <div class="comment-input">
+          <textarea
+            aria-label="Comment"
+            aria-describedby="comment-hint"
+            placeholder="Message…"
+            rows="1"
+            value={timeline.draft?.text || ''}
+            readonly={!canWrite}
+            disabled={suspended}
+            oninput={(event) => timeline.setText(event.currentTarget.value)}
+            use:autosize={timeline.draft?.text || ''}
+            onkeydown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}></textarea>
+          <button
+            type="submit"
+            class="comment-send"
+            aria-label="Send"
+            title="Send"
+            disabled={!canWrite || suspended || !timeline.draft?.text.trim() || commentTooLong}
+            ><Icon name="up" size={15} strokeWidth={2.25} /></button
+          >
+        </div>
+        <span id="comment-hint" class="comment-hint" class:danger-text={commentTooLong}
+          >{commentTooLong
+            ? 'Comment exceeds 16 KiB'
+            : 'Enter to send · Shift+Enter for a new line'}</span
+        >
+      </form>
+    {/if}
+  </div>
 </aside>

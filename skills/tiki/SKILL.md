@@ -91,6 +91,6 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/activity. Comments, full-text search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity is a change history, not a writable comment feed. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
+The CLI currently provides item create/get/list/update/move/activity. Comment creation, full-text search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. Activity includes ticket changes and comments; the CLI cannot post comments. Do not emulate comments by silently appending to descriptions; report progress in the response unless description changes are requested or already authorized.
 
 Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent ticket URLs, successful writes, or completion evidence.

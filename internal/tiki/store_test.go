@@ -112,7 +112,7 @@ func TestMembershipsFiltersAndRollback(t *testing.T) {
 	if err != nil || len(p.Items) != 2 {
 		t.Fatalf("failed create persisted: %+v, %v", p, err)
 	}
-	entries, err := s.Activity(t.Context(), i.ID, 0, 50)
+	entries, err := s.Activity(t.Context(), i.ID, 0, nil, 50)
 	if err != nil || len(entries.Activity) != 2 {
 		t.Fatalf("activity not atomic: %+v, %v", entries, err)
 	}
@@ -132,7 +132,7 @@ func TestActivityPaginationBoundsLargeDescriptions(t *testing.T) {
 	var after ID
 	total := 0
 	for {
-		page, err := s.Activity(t.Context(), i.ID, after, 200)
+		page, err := s.Activity(t.Context(), i.ID, 0, &after, 200)
 		if err != nil {
 			t.Fatal(err)
 		}
