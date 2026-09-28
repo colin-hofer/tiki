@@ -47,18 +47,28 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 	if err != nil {
 		return out, err
 	}
-	// ponytail: substring search with ASCII case folding; FTS5 if descriptions or ranking are needed.
-	words := strings.Fields(strings.ToLower(f.Query))
-	if len(words) > 10 || len(f.Query) > 300 || !utf8.ValidString(f.Query) || strings.ContainsFunc(f.Query, unicode.IsControl) {
-		return out, invalid("query must be at most 300 characters and 10 words without control characters")
+	// ponytail: literal substring scans; use FTS5 if search volume needs an index.
+	if len(f.Queries) > 5 {
+		return out, invalid("at most 5 queries are allowed")
+	}
+	var queries [][]string
+	for _, query := range f.Queries {
+		words := strings.Fields(strings.ToLower(query))
+		if len(words) > 10 || utf8.RuneCountInString(query) > 300 || !utf8.ValidString(query) || strings.ContainsFunc(query, unicode.IsControl) {
+			return out, invalid("each query must be at most 300 characters and 10 words without control characters")
+		}
+		// Empty alternatives must not turn a search into an unfiltered list.
+		if len(words) > 0 {
+			queries = append(queries, words)
+		}
 	}
 	fingerprint, _ := json.Marshal(struct {
 		Tags       []string
 		Status     Status
 		Assignee   ID
 		Unassigned bool
-		Words      []string
-	}{tags, f.Status, f.Assignee, f.Unassigned, words})
+		Queries    [][]string
+	}{tags, f.Status, f.Assignee, f.Unassigned, queries})
 	filterHash := sha256.Sum256(fingerprint)
 	filterKey := hex.EncodeToString(filterHash[:])
 	var c cursor
@@ -95,10 +105,18 @@ func listItems(ctx context.Context, tx *sql.Tx, f Filter) (Page, error) {
 		where = append(where, "EXISTS(SELECT 1 FROM item_tags it WHERE it.item_id=i.id AND it.tag_id=(SELECT id FROM tags WHERE name=?))")
 		args = append(args, tag)
 	}
-	for _, word := range words {
-		where = append(where, `(instr(lower(i.title),?)>0 OR CAST(i.id AS TEXT)=? OR EXISTS(
-			SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND instr(t.name,?)>0))`)
-		args = append(args, word, strings.TrimPrefix(strings.TrimPrefix(word, "#"), "tk-"), word)
+	var alternatives []string
+	for _, words := range queries {
+		var terms []string
+		for _, word := range words {
+			terms = append(terms, `(instr(lower(i.title),?)>0 OR instr(lower(i.description),?)>0 OR CAST(i.id AS TEXT)=? OR EXISTS(
+				SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND instr(t.name,?)>0))`)
+			args = append(args, word, word, strings.TrimPrefix(strings.TrimPrefix(word, "#"), "tk-"), word)
+		}
+		alternatives = append(alternatives, "("+strings.Join(terms, " AND ")+")")
+	}
+	if len(alternatives) > 0 {
+		where = append(where, "("+strings.Join(alternatives, " OR ")+")")
 	}
 	if f.Cursor != "" {
 		where = append(where, "(i.priority,i.id)>(?,?)")

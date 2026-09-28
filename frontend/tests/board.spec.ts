@@ -365,6 +365,25 @@ test('reconciliation preserves versions and positions while paged moves identify
   ).toEqual([first]);
 });
 
+test('description matches survive summary reconciliation and are rechecked on live edits', () => {
+  const filters = { status: '' as const, tag: '', assignee: '', query: 'hidden needle' };
+  const full = { ...makeItem(1, 'todo', 'Unrelated title'), description: 'Hidden search needle' };
+  const { description, ...summary } = full;
+  let items = reconcileItems([], [summary], filters);
+  expect(items).toEqual([summary]);
+  expect(reconcileItems(items, [], filters)).toBe(items);
+  expect(matchesQuery(full, filters.query)).toBe(true);
+  const edited = { ...full, title: 'Changed title', version: 2 };
+  items = applyItemChanges(items, [edited], {}, filters).items;
+  expect(items).toHaveLength(1);
+  expect(items[0].description).toBeUndefined();
+  expect(applyItemChanges(items, [{ ...summary, version: 3 }], {}, filters).items).toEqual([]);
+  expect(
+    applyItemChanges(items, [{ ...edited, description: 'Other text', version: 3 }], {}, filters)
+      .items,
+  ).toEqual([]);
+});
+
 test('changing filters cancels a slow snapshot without replacing the newer view', async ({
   page,
   context,

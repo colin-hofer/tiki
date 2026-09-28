@@ -28,7 +28,7 @@ Examples use illustrative IDs and tags; substitute values actually returned by T
 ```sh
 tiki --json item list --tag repo/tiki --status todo --assignee me --limit 20
 tiki --json item list --tag repo/tiki --assignee none --limit 20
-tiki --json item list --query 'keyboard focus' --limit 20
+tiki --json item list --query 'keyboard focus' --query 'tab navigation' --limit 20
 tiki --json item get 123
 tiki --json item activity 123 --limit 20
 tiki --json user list --limit 50
@@ -40,7 +40,7 @@ tiki --json tag list --limit 50
 - Lists return `items` and optional `next_cursor`. Continue with `--cursor` and the same filters. Users, tags, and activity return `next_after`, continued with `--after`. Stop when the cursor is absent or the task has enough information. A partial page is not proof that no match exists.
 - Pages default to 50 and cap at 200. Pagination is live: concurrent moves can shift results. Deduplicate by ID when collecting multiple pages.
 - Repeated `--tag` filters use AND. Tags are trimmed/lowercased. IDs are decimal strings in JSON; preserve them without floating-point conversion.
-- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items where every word matches the title, a tag, or an exact ticket ID (`123`, `#123`, or `TK-123`), case-insensitively for ASCII; it does not search descriptions. Before creating a ticket, run two or three short `--query` variants to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
+- Item lists are priority-ordered, not newest-first. `--query 'words'` keeps items where every word matches the title, full description, a tag, or an exact ticket ID (`123`, `#123`, or `TK-123`), case-insensitively for ASCII. Words are literal substrings; regex and quoted phrases are not supported. Repeat `--query` for OR: `--query 'keyboard focus' --query 'tab navigation'` finds either set of words in one deduplicated result. Other filters apply to all alternatives. At most 5 queries, each with 10 words and 300 characters; blank queries are ignored. Preserve every query when continuing with `--cursor`. Before creating a ticket, use two or three short alternatives in one request to find duplicates. Report incomplete coverage rather than claiming a global absence when pages were left unread.
 
 ## Create and edit
 
@@ -101,7 +101,7 @@ After an uncertain update or move, read the current item and relevant activity/o
 
 ## Current boundaries and reporting
 
-The CLI currently provides item create/get/list/update/move/comment/activity. Description search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. If an older CLI lacks `item comment`, report that it needs updating; do not emulate comments by appending to descriptions.
+The CLI currently provides item create/get/list/update/move/comment/activity. Regex, quoted-phrase search, field selection, bulk updates, repository defaults, and CLI watch remain unavailable. Check installed help before assuming a newer capability exists. If an older CLI lacks `item comment`, report that it needs updating; do not emulate comments by appending to descriptions.
 
 Report ticket IDs, the changes confirmed by returned records, and any unresolved conflicts or uncertain outcomes. For completed coding work, include relevant test results and an existing PR link when available. Do not invent successful writes or completion evidence.
 

@@ -161,13 +161,13 @@ func (a *app) createItem() *cobra.Command {
 }
 
 func (a *app) listItems() *cobra.Command {
-	var tags []string
-	var status, assignee, query, cursor string
+	var tags, queries []string
+	var status, assignee, cursor string
 	var limit int
-	c := &cobra.Command{Use: "list", Short: "List by priority, with optional tag, assignee, and title filters", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "list", Short: "List by priority, with optional tag, status, assignee, and search filters", Args: cobra.NoArgs}
 	c.Flags().StringArrayVar(&tags, "tag", nil, "Required tag; repeated tags use AND")
 	c.Flags().StringVar(&status, "status", "", "Status filter")
-	c.Flags().StringVar(&query, "query", "", "Words that must all appear in the title (case-insensitive)")
+	c.Flags().StringArrayVar(&queries, "query", nil, "Search title, description, tags, or ID; all words must match; repeat for OR (max 5 queries, 10 words/300 characters each)")
 	c.Flags().StringVar(&assignee, "assignee", "", "User ID, me, or none for unassigned items")
 	c.Flags().StringVar(&cursor, "cursor", "", "Next cursor from a previous page")
 	c.Flags().IntVar(&limit, "limit", tiki.DefaultPageSize, "Page size, maximum 200")
@@ -189,8 +189,8 @@ func (a *app) listItems() *cobra.Command {
 		if assignee != "" {
 			q.Set("assignee", assignee)
 		}
-		if query != "" {
-			q.Set("query", query)
+		for _, query := range queries {
+			q.Add("query", query)
 		}
 		if cursor != "" {
 			q.Set("cursor", cursor)

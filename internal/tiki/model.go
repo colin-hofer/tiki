@@ -192,13 +192,14 @@ type MoveItem struct {
 }
 
 // Filter selects tickets in ascending (priority, ID) order. All tags must match;
+// queries use OR, with AND between the words of each query.
 // a cursor belongs to its original filter. A zero limit uses DefaultPageSize.
 type Filter struct {
 	Tags       []string
 	Assignee   ID
 	Unassigned bool
 	Status     Status
-	Query      string
+	Queries    []string
 	Limit      int
 	Cursor     string
 }

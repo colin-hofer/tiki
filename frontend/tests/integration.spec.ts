@@ -17,12 +17,14 @@ test('real Go API: search and paging reach every backlog ticket, including a new
     session.session_token,
   );
   const tag = `pagination-${crypto.randomUUID()}`;
+  const description = 'Context. '.repeat(1000) + 'Hidden-description-needle';
   let last!: Item;
   for (let n = 0; n < 25; n++) {
     const response = await request.post('/api/v1/items', {
       headers,
       data: {
         title: n === 24 ? 'Buried search needle' : `Paged backlog ${n}`,
+        description: n === 24 ? description : '',
         status: 'backlog',
         tags: [tag],
       },
@@ -36,6 +38,27 @@ test('real Go API: search and paging reach every backlog ticket, including a new
   await page.getByLabel('Search tickets').fill('needle');
   await expect(column.locator('[data-ticket]')).toHaveCount(1);
   await expect(page.locator(`#ticket-${last.id}`)).toBeVisible();
+  const searchResponse = page.waitForResponse(
+    (response) => response.url().includes('/board?') && response.url().includes('query=HIDDEN'),
+  );
+  await page.getByLabel('Search tickets').fill('HIDDEN-description');
+  const result = await (await searchResponse).json();
+  expect(result.columns.backlog.items).toHaveLength(1);
+  expect(result.columns.backlog.items[0].description).toBeUndefined();
+  expect(result.columns.backlog.items[0].preview).not.toContain('Hidden-description');
+  await expect(page.locator(`#ticket-${last.id}`)).toBeVisible();
+  await page.reload();
+  await expect(page.locator(`#ticket-${last.id}`)).toBeVisible();
+  // Live updates use the full body, including when clearing it omits description in JSON.
+  for (const body of ['', description]) {
+    const response = await request.patch(`/api/v1/items/${last.id}`, {
+      headers,
+      data: { version: last.version, description: body },
+    });
+    expect(response.ok()).toBeTruthy();
+    last = await response.json();
+    await expect(column.locator('[data-ticket]')).toHaveCount(body ? 1 : 0);
+  }
   await page.getByLabel('Search tickets').fill('');
   await expect(column.locator('[data-ticket]')).toHaveCount(20);
   await page.getByRole('button', { name: 'Add item to Backlog', exact: true }).click();

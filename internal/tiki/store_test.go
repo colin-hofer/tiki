@@ -44,20 +44,92 @@ func TestTitleQuery(t *testing.T) {
 		addItem(t, s, admin.ID, title)
 	}
 	for query, want := range map[string]int{"  FOCUS keyboard ": 1, "first": 1, "focus first": 0, "": 3} {
-		p, err := s.List(t.Context(), Filter{Query: query})
+		p, err := s.List(t.Context(), Filter{Queries: []string{query}})
 		if err != nil || len(p.Items) != want {
 			t.Fatalf("query %q: %+v, %v", query, p, err)
 		}
 	}
-	_, err := s.List(t.Context(), Filter{Query: "a\tb"})
+	_, err := s.List(t.Context(), Filter{Queries: []string{"a\tb"}})
 	requireCode(t, err, "validation")
 	// A cursor issued for one query must not continue another.
-	p, err := s.List(t.Context(), Filter{Query: "f", Limit: 1})
+	p, err := s.List(t.Context(), Filter{Queries: []string{"f"}, Limit: 1})
 	if err != nil || p.NextCursor == "" {
 		t.Fatalf("paged query: %+v, %v", p, err)
 	}
-	_, err = s.List(t.Context(), Filter{Query: "first", Limit: 1, Cursor: p.NextCursor})
+	_, err = s.List(t.Context(), Filter{Queries: []string{"first"}, Limit: 1, Cursor: p.NextCursor})
 	requireCode(t, err, "validation")
+}
+
+func TestDescriptionAndAlternativeQueries(t *testing.T) {
+	s, admin := fixture(t)
+	first, err := s.Create(t.Context(), admin.ID, CreateItem{
+		Title: "Keyboard focus", Status: StatusTodo, Tags: []string{"frontend"},
+		Description: strings.Repeat("Context. ", 1000) + "Tab navigation, path/to/file.go 100% a_b [draft]",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Mouse controls", Status: StatusTodo, Description: "Click pointer focus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third := addItem(t, s, admin.ID, "Unrelated")
+	for _, tc := range []struct {
+		queries []string
+		want    []ID
+	}{
+		{[]string{"NAVIGATION"}, []ID{first.ID}},
+		{[]string{"keyboard navigation frontend"}, []ID{first.ID}},
+		{[]string{"keyboard pointer"}, nil},
+		{[]string{"navigation", "pointer"}, []ID{first.ID, second.ID}},
+		{[]string{"keyboard missing", "pointer"}, []ID{second.ID}},
+		{[]string{"focus", "controls"}, []ID{first.ID, second.ID}},
+		{[]string{"navigation, path/to/file.go 100% a_b [draft]"}, []ID{first.ID}},
+		{[]string{"navigation|pointer"}, nil},
+		{[]string{"' OR 1=1 --"}, nil},
+		{[]string{" ", "pointer"}, []ID{second.ID}},
+		{[]string{" "}, []ID{first.ID, second.ID, third.ID}},
+	} {
+		page, err := s.List(t.Context(), Filter{Queries: tc.queries})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []ID
+		for _, item := range page.Items {
+			ids = append(ids, item.ID)
+			if item.Description != "" || strings.Contains(item.Preview, "navigation") {
+				t.Fatalf("search leaked full description: %+v", item)
+			}
+		}
+		if !slices.Equal(ids, tc.want) {
+			t.Fatalf("queries %q: got %v, want %v", tc.queries, ids, tc.want)
+		}
+	}
+	// Filters constrain every OR alternative, including matches in descriptions.
+	page, err := s.List(t.Context(), Filter{Queries: []string{"navigation", "pointer", "unrelated"}, Tags: []string{"frontend"}, Status: StatusTodo})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != first.ID {
+		t.Fatalf("filtered alternatives: %+v, %v", page, err)
+	}
+	filter := Filter{Queries: []string{"focus", "controls"}, Limit: 1}
+	page, err = s.List(t.Context(), filter)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != first.ID || page.NextCursor == "" {
+		t.Fatalf("first page: %+v, %v", page, err)
+	}
+	filter.Cursor = page.NextCursor
+	page, err = s.List(t.Context(), filter)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != second.ID || page.NextCursor != "" {
+		t.Fatalf("next page: %+v, %v", page, err)
+	}
+	filter.Queries[1] = "mouse"
+	_, err = s.List(t.Context(), filter)
+	requireCode(t, err, "validation")
+	for _, queries := range [][]string{
+		{"1", "2", "3", "4", "5", "6"}, {strings.Repeat("x", 301)},
+		{strings.Repeat("word ", 11)}, {"valid", "a\tb"}, {"\xff"},
+	} {
+		_, err := s.List(t.Context(), Filter{Queries: queries})
+		requireCode(t, err, "validation")
+	}
 }
 
 func TestSearchFindsTicketsBeyondTheFirstPage(t *testing.T) {
@@ -65,25 +137,25 @@ func TestSearchFindsTicketsBeyondTheFirstPage(t *testing.T) {
 	for range 25 {
 		addItem(t, s, admin.ID, "Earlier ticket")
 	}
-	target, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Buried release work", Tags: []string{"repo/tiki"}})
+	target, err := s.Create(t.Context(), admin.ID, CreateItem{Title: "Buried release work", Description: "Deployment checklist", Tags: []string{"repo/tiki"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, query := range []string{"buried RELEASE", target.ID.String(), "#" + target.ID.String(), "TK-" + target.ID.String(), "repo/tiki", "release tiki"} {
-		board, err := s.Board(t.Context(), Filter{Query: query})
+	for _, query := range []string{"buried RELEASE", "deployment checklist", "release deployment", target.ID.String(), "#" + target.ID.String(), "TK-" + target.ID.String(), "repo/tiki", "release tiki"} {
+		board, err := s.Board(t.Context(), Filter{Queries: []string{query}})
 		if err != nil || len(board[StatusBacklog].Items) != 1 || board[StatusBacklog].Items[0].ID != target.ID {
 			t.Fatalf("query %q missed buried ticket: %+v, %v", query, board, err)
 		}
 	}
-	board, err := s.Board(t.Context(), Filter{Query: "earlier"})
+	board, err := s.Board(t.Context(), Filter{Queries: []string{"earlier"}})
 	if err != nil || len(board[StatusBacklog].Items) != 20 || board[StatusBacklog].NextCursor == "" {
 		t.Fatalf("search is not paginated: %+v, %v", board, err)
 	}
-	page, err := s.List(t.Context(), Filter{Status: StatusBacklog, Query: "earlier", Cursor: board[StatusBacklog].NextCursor})
+	page, err := s.List(t.Context(), Filter{Status: StatusBacklog, Queries: []string{"earlier"}, Cursor: board[StatusBacklog].NextCursor})
 	if err != nil || len(page.Items) != 5 {
 		t.Fatalf("search continuation: %+v, %v", page, err)
 	}
-	_, err = s.List(t.Context(), Filter{Status: StatusBacklog, Query: "release", Cursor: board[StatusBacklog].NextCursor})
+	_, err = s.List(t.Context(), Filter{Status: StatusBacklog, Queries: []string{"release"}, Cursor: board[StatusBacklog].NextCursor})
 	requireCode(t, err, "validation")
 }
 

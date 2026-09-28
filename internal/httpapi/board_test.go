@@ -14,7 +14,7 @@ func TestBoardIncludesBoundedDirectoriesAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(t.Context(), admin.ID, tiki.CreateItem{Title: "Visible", Status: tiki.StatusTodo, Tags: []string{"api"}}); err != nil {
+	if _, err := store.Create(t.Context(), admin.ID, tiki.CreateItem{Title: "Visible", Description: "Description needle", Status: tiki.StatusTodo, Tags: []string{"api"}}); err != nil {
 		t.Fatal(err)
 	}
 	handler := Handler(store)
@@ -24,6 +24,7 @@ func TestBoardIncludesBoundedDirectoriesAndFilters(t *testing.T) {
 	}{
 		{"", "", 401}, {"?status=unknown", session.Token, 400}, {"?assignee=bad", session.Token, 400},
 		{"?limit=100", session.Token, 400}, {"?cursor=bad", session.Token, 400}, {"?tag=api&status=todo", session.Token, 200},
+		{"?status=todo&query=missing&query=needle", session.Token, 200},
 	} {
 		request := httptest.NewRequest("GET", "/api/v1/board"+tc.query, nil)
 		request.Header.Set("Authorization", "Bearer "+tc.token)

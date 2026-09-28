@@ -47,7 +47,7 @@ func TestCLIThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	var first, second tiki.Item
-	if err = json.Unmarshal([]byte(invoke(0, "item", "create", "--title", "First", "--assignee", "1", "--assignee", user.ID.String(), "--tag", "Repo/Tiki")), &first); err != nil {
+	if err = json.Unmarshal([]byte(invoke(0, "item", "create", "--title", "First", "--description", "Keyboard navigation, focus", "--assignee", "1", "--assignee", user.ID.String(), "--tag", "Repo/Tiki")), &first); err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal([]byte(invoke(0, "item", "create", "--title", "Second")), &second); err != nil {
@@ -60,6 +60,19 @@ func TestCLIThroughHTTP(t *testing.T) {
 	}
 	if len(page.Items) != 2 || page.Items[0].ID != second.ID || page.Items[0].Status != tiki.StatusTodo || page.Items[0].Version != 2 {
 		t.Fatalf("move not reflected: %+v", page)
+	}
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"--query", "NAVIGATION,"}, 1},
+		{[]string{"--query", "navigation,", "--query", "second"}, 2},
+		{[]string{"--query", "navigation,", "--query", "second", "--tag", "repo/tiki"}, 1},
+		{[]string{"--query", "navigation, second"}, 0},
+	} {
+		if err = json.Unmarshal([]byte(invoke(0, append([]string{"item", "list"}, tc.args...)...)), &page); err != nil || len(page.Items) != tc.want {
+			t.Fatalf("search %v: %+v, %v", tc.args, page, err)
+		}
 	}
 	invoke(0, "item", "update", first.ID.String(), "--remove-assignee", "1", "--status", "in_progress", "--if-version", "1")
 	invoke(4, "item", "update", first.ID.String(), "--title", "stale", "--if-version", "1")

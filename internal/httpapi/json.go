@@ -16,7 +16,7 @@ import (
 
 func itemFilter(r *http.Request) (tiki.Filter, error) {
 	q := r.URL.Query()
-	f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Query: q.Get("query"), Cursor: q.Get("cursor")}
+	f := tiki.Filter{Tags: q["tag"], Status: tiki.Status(q.Get("status")), Queries: q["query"], Cursor: q.Get("cursor")}
 	var err error
 	f.Limit, err = queryLimit(r, 0)
 	if err != nil {

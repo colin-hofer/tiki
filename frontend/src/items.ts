@@ -11,12 +11,16 @@ export interface Filters {
 export function matchesQuery(item: Item, query = '') {
   // Match SQLite's ASCII case folding and the API's word-by-word search.
   const lower = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
-  return lower(query)
+  const title = lower(item.title);
+  const description = lower(item.description || '');
+  return query
+    .toLowerCase()
     .trim()
     .split(/\s+/)
     .every(
       (word) =>
-        lower(item.title).includes(word) ||
+        title.includes(word) ||
+        description.includes(word) ||
         item.tags.some((tag) => tag.includes(word)) ||
         item.id === word.replace(/^#/, '').replace(/^tk-/, ''),
     );
@@ -55,16 +59,21 @@ export function reconcileItems(
   replace: Status[] = [],
   order = false,
 ): Item[] {
+  // Server pages already matched the full description, which summaries omit.
+  // Full live updates are checked before reaching reconciliation.
+  const summaryFilters = { ...filters, query: '' };
+  const matches = (item: Item) =>
+    matchesFilters(item, item.description === undefined ? summaryFilters : filters);
   const previous = new Map(current.map((item) => [item.id, item]));
   const next = new Map(
     current
-      .filter((item) => !replace.includes(item.status) && matchesFilters(item, filters))
+      .filter((item) => !replace.includes(item.status) && matches(item))
       .map((item) => [item.id, item]),
   );
   for (const item of incoming) {
     const known = next.get(item.id) || previous.get(item.id);
     const latest = known && known.version >= item.version ? known : item;
-    if (matchesFilters(latest, filters)) {
+    if (matches(latest)) {
       const { description, ...summary } = latest;
       next.set(item.id, latest === known ? known : summary);
     } else next.delete(item.id);
