@@ -3,7 +3,7 @@
   import { flip } from 'svelte/animate';
   import { initials, avatarHue, label, statuses } from './api';
   import type { Item, Status } from './api';
-  import type { BoardState } from './board.svelte';
+  import type { BoardState } from './board-state.svelte';
   import Icon from './Icon.svelte';
   import { arrive, capture, duration, pin, unpin } from './motion';
 
@@ -52,7 +52,7 @@
   } = $props();
   const columns = $derived(data.columns);
   const selected = $derived(visible.find((item) => item.id === selectedId));
-  const openId = $derived(data.openId);
+  const openId = $derived(data.ticket.id);
   const cursors = $derived(data.cursors);
   const busy = $derived(data.busy || Boolean(data.writing));
   const hasLoaded = $derived(data.hasLoaded);
@@ -614,10 +614,14 @@
                 aria-current={openId === item.id ? 'true' : undefined}
               >
                 <span class="card-title">{item.title}</span>
+                {#if item.preview}<span class="card-preview">{item.preview}</span>{/if}
                 <div class="card-meta">
                   <span class={`item-type ${item.type}`} title={label(item.type)}
                     ><Icon name={item.type} size={12} /></span
-                  ><span class="item-id">#{item.id}</span><span class="card-tags"
+                  ><span class="item-id">#{item.id}</span>{#if item.url}<span
+                      class="card-link"
+                      title={item.url}><Icon name="link" size={12} /></span
+                    >{/if}<span class="card-tags"
                     >{#each item.tags.slice(0, 2) as tag}<span>{tag}</span
                       >{/each}{#if item.tags.length > 2}<span>+{item.tags.length - 2}</span
                       >{/if}</span

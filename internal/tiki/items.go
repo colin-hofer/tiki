@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -136,6 +137,35 @@ const itemColumns = `i.id,i.type,i.status,i.priority,i.title,i.created_by,i.crea
  (SELECT json_group_array(CAST(user_id AS TEXT)) FROM (SELECT user_id FROM item_assignees WHERE item_id=i.id ORDER BY user_id)),
  (SELECT json_group_array(name) FROM (SELECT t.name FROM tags t JOIN item_tags it ON it.tag_id=t.id WHERE it.item_id=i.id ORDER BY t.name))`
 
+// PreviewRunes bounds the description excerpt that lists, boards and live updates carry.
+const PreviewRunes = 140
+
+// previewSource is how much description a list reads to build an excerpt.
+const previewSource = 4 * PreviewRunes
+
+var markdownMarker = regexp.MustCompile(`^([-*+] \[[ xX]\]|#{1,6}|[-*+>]|\d+[.)])\s+`)
+
+// descriptionPreview is the start of a description as one line of plain text.
+func descriptionPreview(description string) string {
+	words := make([]string, 0, 32)
+	for line := range strings.Lines(description) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "```") {
+			continue
+		}
+		words = append(words, strings.Fields(markdownMarker.ReplaceAllString(line, ""))...)
+	}
+	text := strings.Join(words, " ")
+	if utf8.RuneCountInString(text) <= PreviewRunes {
+		return text
+	}
+	short := string([]rune(text)[:PreviewRunes])
+	if i := strings.LastIndexByte(short, ' '); i > PreviewRunes/2 {
+		short = short[:i]
+	}
+	return strings.TrimRight(short, " .,;:") + "…"
+}
+
 func scanItem(row scanner) (Item, error) {
 	var i Item
 	var assignees, tags string
@@ -149,6 +179,7 @@ func scanItem(row scanner) (Item, error) {
 	if err = json.Unmarshal([]byte(assignees), &i.Assignees); err != nil {
 		return i, err
 	}
+	i.Preview = descriptionPreview(i.Description)
 	err = json.Unmarshal([]byte(tags), &i.Tags)
 	return i, err
 }

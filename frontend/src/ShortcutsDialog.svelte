@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
-  let { onclose }: { onclose: () => void } = $props();
+  let { view, onclose }: { view: 'board' | 'list'; onclose: () => void } = $props();
+  const list = $derived(view === 'list');
   let dialog: HTMLDialogElement;
   onMount(() => dialog.showModal());
 </script>
@@ -21,7 +22,7 @@
       ><Icon name="close" size={16} /></button
     >
   </header>
-  {#each [{ title: 'Move around', keys: [['↑ ↓ / j k', 'Previous / next ticket'], ['← → / h l', 'Previous / next column'], ['Home / gg · End / G', 'First · last loaded ticket'], ['1–7', 'Jump to a column'], ['Enter', 'Open ticket'], ['[ ] / j k', 'Previous / next in details'], ['F6', 'Switch board / details or search']] }, { title: 'Work with tickets', keys: [['C', 'Create in current column'], ['Delete', 'Delete ticket (with confirmation)'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status'], ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] }, { title: 'Find and control', keys: [['/', 'Search loaded tickets'], ['Enter / ↓ in search', 'Focus first result'], ['Ctrl / ⌘ K', 'Commands'], ['↑ ↓ / Ctrl J K', 'Navigate a command menu'], ['R', 'Refresh and apply order'], ['Escape', 'Leave field, close or cancel'], ['?', 'This guide']] }] as group}<h3
+  {#each [{ title: 'Move around', keys: [['↑ ↓ / j k', list ? 'Previous / next ticket or group header' : 'Previous / next ticket'], list ? ['← / h · → / l', 'Group header · back into rows'] : ['← → / h l', 'Previous / next column'], ['Home / gg · End / G', 'First · last loaded ticket'], ['1–7', list ? 'Jump to a group' : 'Jump to a column'], ['Enter', 'Open ticket'], ['[ ] / j k', 'Previous / next in details'], ['F6', 'Switch board / details or search']] }, { title: 'Work with tickets', keys: [['C', list ? 'Create in current group' : 'Create in current column'], ['Delete', 'Delete ticket (with confirmation)'], ['E / I · D', 'Edit title · description'], ['A · M', 'Assignees · assign / unassign me'], ['S · T · Y', 'Status · tags · type'], ...(list ? [['Alt ↑ ↓ / Shift K J', 'Reorder · past a group edge, change status']] : [['Alt ↑ ↓ / Shift K J', 'Reorder ticket'], ['Alt ← → / Shift H L', 'Move to adjacent status']]), ['Ctrl / ⌘ Enter', 'Save now / create and edit'], ['Ctrl / ⌘ Shift Enter', 'Save and close details']] }, { title: 'Find and control', keys: [['/', 'Search loaded tickets'], ['Enter / ↓ in search', 'Focus first result'], ['Ctrl / ⌘ K', 'Commands'], ['↑ ↓ / Ctrl J K', 'Navigate a command menu'], ['R', 'Refresh and apply order'], ['V', 'Switch board / list view'], ...(list ? [['← → on a header · X', 'Collapse · expand group']] : []), ['Escape', 'Leave field, close or cancel'], ['?', 'This guide']] }] as group}<h3
     >
       {group.title}
     </h3>

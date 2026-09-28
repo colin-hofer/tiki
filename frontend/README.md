@@ -35,7 +35,7 @@ Browser tests run their own Vite server on port 5174 and a Go API on port 5175. 
 
 - `App.svelte` owns authentication and preserves the workspace during session expiry.
 - `Workspace.svelte` coordinates URL state, commands, dialogs, and navigation that must finish pending edits.
-- `board.svelte.ts` owns server snapshots, live events, pagination, detail reads, and all ticket writes. Writes invalidate older reads; snapshot reconciliation never replaces a newer item with an older version. Failed writes are not retried automatically.
+- `board-state.svelte.ts` owns server snapshots, live events, pagination, detail reads, and all ticket writes. Writes invalidate older reads; snapshot reconciliation never replaces a newer item with an older version. Failed writes are not retried automatically.
 - `Board.svelte` owns card focus, keyboard navigation, touch dragging, and board rendering. `Toolbar.svelte` owns search/filter controls.
 - `ItemEditor.svelte` owns the draft and its sequential autosave lifecycle. `item-edit.ts` computes patches and reapplies only edits made after a request or against a conflicted version. `ItemActivity.svelte` owns cancellable activity reads.
 
