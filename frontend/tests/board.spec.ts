@@ -1658,6 +1658,75 @@ test('pushed tickets enter and leave a filtered view without list requests', asy
 test.describe('phone layout', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
+  test('swiping right returns from details only after pending edits are saved', async ({
+    page,
+    context,
+  }) => {
+    const state = await mock(context);
+    await signIn(page);
+    await page.locator('#ticket-2').click();
+    const panel = page.getByRole('complementary', { name: 'Item 2', exact: true });
+    await expect(panel).toBeFocused();
+    const cdp = await context.newCDPSession(page);
+    const swipe = async (dx: number, dy = 0, selector = '.detail-id', cancel = false) => {
+      const box = (await panel.locator(selector).boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 5; step++)
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x + (dx * step) / 5, y: y + (dy * step) / 5 }],
+        });
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: cancel ? 'touchCancel' : 'touchEnd',
+        touchPoints: [],
+      });
+    };
+
+    // Taps, left/vertical/diagonal swipes, cancelled gestures, and editing stay in details.
+    for (const [dx, dy] of [
+      [20, 0],
+      [-100, 0],
+      [0, 120],
+      [90, 100],
+    ]) {
+      await swipe(dx, dy);
+      await expect(panel).toBeVisible();
+    }
+    await swipe(120, 0, '.detail-id', true);
+    await expect(panel).toBeVisible();
+    await page.getByLabel('Ticket title').focus();
+    await swipe(120, 0, '.title-editor');
+    await expect(panel).toBeVisible();
+
+    await page.getByLabel('Ticket title').fill('');
+    await swipe(120);
+    await expect(panel).toBeVisible();
+    expect(state.writes).toBe(0);
+
+    state.failWrites = true;
+    await page.getByLabel('Ticket title').fill('Keep my mobile edit');
+    await swipe(120);
+    await expect(page.getByText('Not saved', { exact: true })).toBeVisible();
+    await expect(panel).toBeVisible();
+    await expect(page.getByLabel('Ticket title')).toHaveValue('Keep my mobile edit');
+
+    state.failWrites = false;
+    await page.getByRole('button', { name: 'Retry save', exact: true }).click();
+    await expect(panel).toHaveAttribute('data-save-state', 'saved');
+    // A pending tag is only committed when the close path flushes it.
+    await page.getByLabel('Add tag').fill('swipe-saved');
+    await swipe(120, 0, '.description-editor');
+    await expect(panel).toHaveCount(0);
+    await expect(page).not.toHaveURL(/item=/);
+    await expect(page.locator('#ticket-2')).toBeFocused();
+    expect(state.items.find((item) => item.id === '2')).toMatchObject({
+      title: 'Keep my mobile edit',
+      tags: ['frontend', 'swipe-saved'],
+    });
+  });
+
   test('filtering out the active feed status selects the remaining tab for quick create', async ({
     page,
     context,

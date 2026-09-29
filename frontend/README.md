@@ -67,7 +67,7 @@ The board keeps one ticket in the Tab order; arrows move between tickets without
 | Switch board and details (or search) | F6                                    |
 | Save immediately / save and close    | Ctrl/Cmd+Enter / Ctrl/Cmd+Shift+Enter |
 
-Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; closing or switching tickets finishes pending saves first. Invalid fields, failed saves, and conflicts keep the panel open until resolved. On narrow screens, Tab stays inside details and F6 finishes pending saves and returns to the board.
+Letter shortcuts pause while typing or choosing a dropdown value. Escape closes a popup, leaves an editor field, then closes the panel; closing or switching tickets finishes pending saves first. Invalid fields, failed saves, and conflicts keep the panel open until resolved. On narrow screens, Tab stays inside details and F6 finishes pending saves and returns to the board. On phones, swiping right in details also returns to the board after saving; scrolling and gestures in active text fields keep the panel open.
 
 On the board, property shortcuts open searchable action menus and save the chosen change immediately. In details, they focus the corresponding field; M changes your assignment. Menus accept arrows, Ctrl+J/K, Ctrl+N/P, or Alt+J/K and Enter. Escape returns focus to the trigger. Quick changes and failed saves retain version checks and never retry writes automatically.
 

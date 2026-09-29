@@ -429,6 +429,45 @@
     await tick();
     board.focusBoard();
   }
+  let detailTouch: Touch | undefined;
+  function startDetailSwipe(event: TouchEvent) {
+    detailTouch = undefined;
+    if (
+      !matchMedia('(max-width: 700px), (pointer: coarse) and (max-height: 500px)').matches ||
+      modal ||
+      palette ||
+      event.touches.length !== 1 ||
+      (event.target as Element).closest(
+        'input, textarea:focus, select, button, a, [contenteditable]',
+      )
+    )
+      return;
+    detailTouch = event.touches[0];
+  }
+  function moveDetailSwipe(event: TouchEvent) {
+    if (!detailTouch) return;
+    const current = event.touches[0];
+    const dx = current.clientX - detailTouch.clientX;
+    const dy = current.clientY - detailTouch.clientY;
+    // Once a gesture becomes a scroll or a left swipe, leave it to the browser.
+    if (
+      event.touches.length !== 1 ||
+      dx < -12 ||
+      (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx))
+    )
+      detailTouch = undefined;
+  }
+  function endDetailSwipe(event: TouchEvent) {
+    const start = detailTouch;
+    detailTouch = undefined;
+    const end = event.changedTouches[0];
+    if (!start || event.touches.length || end.identifier !== start.identifier || modal || palette)
+      return;
+    const dx = end.clientX - start.clientX;
+    const dy = end.clientY - start.clientY;
+    if (dx >= 80 && dx > Math.abs(dy) * 2 && window.getSelection()?.isCollapsed !== false)
+      void closeDetails();
+  }
   async function create(status: Status = activeColumn) {
     if (!(await guardDraft()) || readonly) return;
     if (!columns.includes(status)) status = columns[0] || 'todo';
@@ -820,7 +859,15 @@
     />
   {/if}
   {#if ticket.id}
-    <div class="detail-shell" transition:panel>
+    <div
+      class="detail-shell"
+      role="presentation"
+      transition:panel
+      ontouchstart={startDetailSwipe}
+      ontouchmove={moveDetailSwipe}
+      ontouchend={endDetailSwipe}
+      ontouchcancel={() => (detailTouch = undefined)}
+    >
       {#if ticket.item}
         {#key ticket.id}
           <ItemEditor
